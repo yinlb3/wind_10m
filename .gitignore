@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Data files (large)
+data/
+*.npy
+*.npz
+*.h5
+*.hdf5
+
+# Models (large)
+models/*.joblib
+models/*.pkl
+models/*.h5
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+venv/
+env/
+.env
+
+# Output
+output/
+results/
+figures/*.png
+figures/*.jpg
