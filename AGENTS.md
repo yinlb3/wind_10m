@@ -28,20 +28,21 @@ wind_10m/
 ├── preprocessing/          # 数据预处理模块
 │   ├── extract_ec.py      # ECMWF数据提取（EC4AI → CSV）
 │   └── convert_npy.py     # 数据格式转换（CSV → npy）
-├── models/                 # 模型训练与预测脚本
+├── models/                 # 模型训练、预测及后处理脚本
 │   ├── LightGBM.py        # LightGBM主训练脚本（UV分量）
 │   ├── LightGBM_CV.py     # 交叉验证版本
 │   ├── LigthGBM2.py       # 风速量级版本
 │   ├── cnn_demo.py        # CNN模型Demo
 │   ├── dnn_demo.py        # DNN模型Demo
-│   └── transformer_demo.py # Transformer模型Demo
-├── utils/                  # 工具函数模块
+│   ├── transformer_demo.py # Transformer模型Demo
 │   ├── avt.py             # 平均值调整技术(AVT)
 │   ├── emd.py             # 经验模态分解(EMD)
 │   ├── gn.py              # 梯度提升网络相关
 │   ├── ots.py             # 最优阈值选择
 │   ├── pdfm.py            # 概率密度函数匹配(PDF)
 │   └── pdfm_uv.py         # UV分量的PDF匹配
+├── src/                    # 通用工具模块
+│   └── utils.py           # 常用工具函数（时间格式化等）
 ├── lgb_predict.py         # LightGBM预测脚本
 ├── access.py              # 模型评估（10分钟平均风速）
 ├── access97.py            # 模型评估（97站点，风速分量）
@@ -249,6 +250,7 @@ python access.py
 | 任务 | 描述 | 完成时间 |
 |------|------|----------|
 | 数据预处理模块化 | 创建 `preprocessing/` 目录，移动 `ec_station.py` → `extract_ec.py`，`data.py` → `convert_npy.py` | 2026-04-02 |
+| 项目结构优化 | 抽象 `format_time` 到 `src/utils.py`，原 `utils/` 移至 `models/`，统一使用中文 Docstring | 2026-04-03 |
 | 删除冗余文件 | 移除 `merge_data.py`（非本项目文件）和 `merge_sta.py`（大赛专用脚本） | 2026-04-02 |
 | 修复索引越界 | `convert_npy.py` 添加站点存在性检查，避免 `ValueError` | 2026-04-02 |
 | 同步 ELEMENTS | `extract_ec.py` 和 `convert_npy.py` 要素列表保持一致 | 2026-04-02 |
