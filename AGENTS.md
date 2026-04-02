@@ -1,7 +1,7 @@
 # Wind-10m 项目说明
 
 > 10米风速机器学习预报校正系统
-> 最后更新：2026-04-02
+> 最后更新：2026-04-03
 
 ---
 
@@ -43,10 +43,11 @@ wind_10m/
 │   └── pdfm_uv.py         # UV分量的PDF匹配
 ├── src/                    # 通用工具模块
 │   └── utils.py           # 常用工具函数（时间格式化等）
-├── lgb_predict.py         # LightGBM预测脚本
-├── access.py              # 模型评估（10分钟平均风速）
-├── access97.py            # 模型评估（97站点，风速分量）
-└── access97_uv.py         # 模型评估（UV分量）
+├── evaluation/             # 模型评估模块
+│   ├── access.py          # 通用评估工具（散点图、时间格式化）
+│   ├── access97.py        # 97站点评估（风速、风向评分）
+│   └── access97_uv.py     # UV分量评估（U/V风分量详细评分）
+└── lgb_predict.py         # LightGBM预测脚本
 ```
 
 ---
@@ -84,7 +85,7 @@ wind_10m/
 
 ### 3.3 模型评估
 
-**评估脚本**：`access.py`, `access97.py`, `access97_uv.py`
+**评估脚本**：`evaluation/access.py`, `evaluation/access97.py`, `evaluation/access97_uv.py`
 
 **评估维度**：
 - 分时次（12-36小时）
@@ -206,9 +207,9 @@ python models/LightGBM.py
 python lgb_predict.py
 
 # 5. 评估模型效果
-python access.py
-# 或 python access97.py
-# 或 python access97_uv.py
+python evaluation/access.py
+# 或 python evaluation/access97.py
+# 或 python evaluation/access97_uv.py
 ```
 
 ### 7.2 路径配置
@@ -255,6 +256,7 @@ python access.py
 | 修复索引越界 | `convert_npy.py` 添加站点存在性检查，避免 `ValueError` | 2026-04-02 |
 | 同步 ELEMENTS | `extract_ec.py` 和 `convert_npy.py` 要素列表保持一致 | 2026-04-02 |
 | 修复变量未定义 | `extract_ec.py` 添加 `file` 变量定义 | 2026-04-02 |
+| 评估模块整理 | 创建 `evaluation/` 目录，移动 `access*.py` 评估脚本 | 2026-04-03 |
 
 ### 🔄 进行中
 
@@ -269,7 +271,7 @@ python access.py
 | 任务 | 描述 | 优先级 |
 |------|------|--------|
 | 模型训练脚本检查 | 检查 `models/` 目录各脚本是否正确引用预处理后的数据路径 | P1 |
-| 评估脚本检查 | 检查 `access*.py` 是否能正确读取模型输出 | P1 |
+| 评估脚本检查 | 检查 `evaluation/access*.py` 是否能正确读取模型输出 | P1 |
 | 路径配置统一 | 考虑将硬编码路径提取到配置文件 | P2 |
 | 代码注释完善 | 补充关键算法的注释说明 | P3 |
 | 添加单元测试 | 为核心函数添加测试用例 | P3 |
@@ -280,5 +282,5 @@ python access.py
 
 - **作者**：yinlb
 - **创建时间**：2023-07
-- **最后修改**：2026-04-02
+- **最后修改**：2026-04-03
 - **项目路径**：`D:\Project\wind_10m`
