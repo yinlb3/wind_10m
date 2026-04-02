@@ -4,7 +4,8 @@
 """
 数据格式转换模块
 
-将EC预报CSV和观测数据CSV转换为numpy数组格式 (.npy), 便于后续模型训练。
+将EC预报CSV和观测数据CSV转换为numpy数组格式 (.npy),
+便于后续模型训练。
 
 Founded in 2023-07-17
 Modified in 2026-04-03
@@ -48,7 +49,8 @@ def main(
     """
     主函数: 转换CSV数据为npy格式
     
-    读取EC预报数据和观测数据, 转换为numpy数组并保存, 供模型训练使用。
+    读取EC预报数据和观测数据,
+    转换为numpy数组并保存, 供模型训练使用。
     
     参数:
         input_path: EC预报CSV文件目录 (由extract_ec.py生成)
@@ -58,8 +60,10 @@ def main(
         year: 处理年份 (2017-2022)
     
     输出:
-        nwp{year}.npy: EC预报数据, shape为 (样本数, 85时效, 97站点, 30要素)
-        ob{year}.npy: 观测数据, shape为 (样本数, 85时效, 97站点, 8要素)
+        nwp{year}.npy: EC预报数据,
+            shape为 (样本数, 85时效, 97站点, 30要素)
+        ob{year}.npy: 观测数据,
+            shape为 (样本数, 85时效, 97站点, 8要素)
     """
     # ---- 1. 初始化：读取站点信息和预分配数组 ----
     station_information = pd.read_csv(
@@ -79,6 +83,7 @@ def main(
     input_dir = Path(input_path)
     input_dir2 = Path(input_path2)
     output_dir = Path(output_path)
+
     # ---- 2. 处理EC预报数据（读取CSV并保存npy） ----
     for i in range(n):
         time_shift = time_begin.shift(hours=12 * i)
@@ -93,10 +98,7 @@ def main(
                 df.reset_index(drop=True, inplace=True)
                 for j, e in enumerate(ELEMENTS):
                     nwp[i, dtime, :, j] = df.loc[:, e]
-    np.save(
-        output_dir / 'nwp{:d}.npy'.format(year),
-        nwp
-    )
+    np.save(output_dir / 'nwp{:d}.npy'.format(year), nwp)
 
     # ---- 3. 处理观测数据（读取CSV并保存npy） ----
     for i in range(n):
@@ -129,14 +131,12 @@ def main(
                             if sta_id in station_information:
                                 ind = station_information.index(sta_id)
                                 ob[i, dtime, ind, j] = df.iloc[k, j + 1]
-    np.save(
-        output_dir / 'ob{:d}.npy'.format(year),
-        ob
-    )
+    np.save(output_dir / 'ob{:d}.npy'.format(year), ob)
 
 
 if __name__ == '__main__':
-    print('The program "convert_npy.py" is beginning.')
+    msg = 'The program "convert_npy.py" is beginning.'
+    print(msg)
     start = arrow.now()
 
     if len(sys.argv) == 1:
@@ -159,5 +159,5 @@ if __name__ == '__main__':
 
     end = arrow.now()
     running_time = (end - start).total_seconds()
-
-    print('The program "convert_npy.py" runs out in {:s}.'.format(utils.format_time(running_time)))
+    time_str = utils.format_time(running_time)
+    print('The program "convert_npy.py" runs out in {:s}.'.format(time_str))

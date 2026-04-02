@@ -4,7 +4,8 @@
 """
 ECMWF-IFS 数据提取模块
 
-从 EC4AI 二进制文件中提取气象要素到指定站点, 输出CSV格式数据。
+从 EC4AI 二进制文件中提取气象要素到指定站点,
+输出CSV格式数据。
 
 Founded in 2023-07-15
 Modified in 2026-04-03
@@ -41,16 +42,22 @@ ELEMENTS = (
 )
 
 
-def main(input_path: str, output_path: str, station_information_path: str) -> None:
+def main(
+    input_path: str,
+    output_path: str,
+    station_information_path: str
+) -> None:
     """
     主函数: 从 EC4AI 提取数据到站点
     
-    遍历指定时间范围的 EC 预报数据, 提取30个要素到97个站点, 输出CSV文件。
+    遍历指定时间范围的 EC 预报数据,
+    提取30个要素到97个站点, 输出CSV文件。
     
     参数:
         input_path: EC4AI 二进制文件根目录
         output_path: 输出CSV文件目录
-        station_information_path: 站点信息CSV文件路径 (包含台站号、经度、纬度)
+        station_information_path: 站点信息CSV文件路径
+            (包含台站号、经度、纬度)
     
     输出:
         按时间命名的CSV文件, 格式为 YYYYMMDDHH.{dtime}.csv
@@ -68,7 +75,7 @@ def main(input_path: str, output_path: str, station_information_path: str) -> No
     # 定义EC数据网格（0.125°和0.25°两种分辨率）
     grid0 = meb.grid((70, 140, 0.125), (0, 60, 0.125))
     grid1 = meb.grid((70, 140, 0.25), (0, 60, 0.25))
-
+    # 定义输入输出路径
     input_dir = Path(input_path)
     output_dir = Path(output_path)
     # 遍历时间范围，读取数据并输出CSV
@@ -108,7 +115,8 @@ def main(input_path: str, output_path: str, station_information_path: str) -> No
 
 
 if __name__ == '__main__':
-    print('The program "extract_ec.py" is beginning.')
+    msg = 'The program "extract_ec.py" is beginning.'
+    print(msg)
     start = arrow.now()
 
     if len(sys.argv) == 1:
@@ -126,5 +134,5 @@ if __name__ == '__main__':
 
     end = arrow.now()
     running_time = (end - start).total_seconds()
-
-    print('The program "extract_ec.py" runs out in {:s}.'.format(format_time(running_time)))
+    time_str = format_time(running_time)
+    print('The program "extract_ec.py" runs out in {:s}.'.format(time_str))
