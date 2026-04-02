@@ -45,7 +45,7 @@ ELEMENTS = (
 def main(
     input_path: str,
     output_path: str,
-    station_information_path: str
+    station_info_path: str
 ) -> None:
     """
     主函数: 从 EC4AI 提取数据到站点
@@ -56,62 +56,74 @@ def main(
     参数:
         input_path: EC4AI 二进制文件根目录
         output_path: 输出CSV文件目录
-        station_information_path: 站点信息CSV文件路径
+        station_info_path: 站点信息CSV文件路径
             (包含台站号、经度、纬度)
     
     输出:
-        按时间命名的CSV文件, 格式为 YYYYMMDDHH.{dtime}.csv
+        按时间命名的CSV文件, 格式为 YYYYMMDDHH.{lead_time}.csv
     """
     # 读取站点信息
-    station_information = pd.read_csv(
-        station_information_path,
+    station_df = pd.read_csv(
+        station_info_path,
         encoding='gb2312',
         low_memory=False
     )
-    station = meb.sta_data(
-        station_information.loc[:, ('台站号', '经度', '纬度')],
+    station_metadata = meb.sta_data(
+        station_df.loc[:, ('台站号', '经度', '纬度')],
         columns=('id', 'lon', 'lat')
     )
-    # 定义EC数据网格（0.125°和0.25°两种分辨率）
-    grid0 = meb.grid((70, 140, 0.125), (0, 60, 0.125))
-    grid1 = meb.grid((70, 140, 0.25), (0, 60, 0.25))
+    # 定义EC数据网格（0.125°高分辨率和0.25°标准分辨率）
+    grid_high_res = meb.grid((70, 140, 0.125), (0, 60, 0.125))
+    grid_standard_res = meb.grid((70, 140, 0.25), (0, 60, 0.25))
     # 定义输入输出路径
     input_dir = Path(input_path)
     output_dir = Path(output_path)
     # 遍历时间范围，读取数据并输出CSV
     time_begin = arrow.get('2017')
     time_end = arrow.get('2023')
-    time_shift = time_begin
-    while time_shift < time_end:
-        yyyymm = time_shift.format('YYYYMM')
-        for dtime in range(12, 37, 3):
-            mmddhh0 = time_shift.format('MMDDHH')
-            mmddhh1 = time_shift.shift(hours=dtime).format('MMDDHH')
-            file = 'C1D{:s}00{:s}001'.format(mmddhh0, mmddhh1)
-            sta = None
-            for i, e in enumerate(ELEMENTS):
-                filename = '{:s}_{:s}.AI.bin'.format(file, e)
-                file_path = input_dir / yyyymm / file / filename
+    forecast_reference_time = time_begin
+    while forecast_reference_time < time_end:
+        year_month = forecast_reference_time.format('YYYYMM')
+        for lead_time in range(12, 37, 3):
+            init_time = forecast_reference_time.format('MMDDHH')
+            valid_time = forecast_reference_time.shift(
+                hours=lead_time
+            ).format('MMDDHH')
+            ec_filename_base = 'C1D{:s}00{:s}001'.format(init_time, valid_time)
+            station_combined = None
+            for elem_idx, element in enumerate(ELEMENTS):
+                filename = '{:s}_{:s}.AI.bin'.format(ec_filename_base, element)
+                file_path = input_dir / year_month / ec_filename_base / filename
                 if not file_path.exists():
-                    sta = None
+                    station_combined = None
                     break
-                data = np.fromfile(str(file_path), dtype=np.float32)
-                if i < 5:
-                    grd = meb.grid_data(grid0, data)
+                raw_data = np.fromfile(str(file_path), dtype=np.float32)
+                # 前5个要素使用0.125°高分辨率网格
+                if elem_idx < 5:
+                    grid_data = meb.grid_data(grid_high_res, raw_data)
                 else:
-                    grd = meb.grid_data(grid1, data)
-                sta0 = meb.interp_gs_nearest(grd, station)
-                meb.set_stadata_names(sta0, e)
+                    grid_data = meb.grid_data(grid_standard_res, raw_data)
+                station_single = meb.interp_gs_nearest(
+                    grid_data, station_metadata
+                )
+                meb.set_stadata_names(station_single, element)
                 meb.set_stadata_coords(
-                    sta0, level=0, time=time_shift.datetime, dtime=dtime
+                    station_single,
+                    level=0,
+                    time=forecast_reference_time.datetime,
+                    dtime=lead_time
                 )
-                sta = meb.combine_on_id(sta, sta0)
-            if sta is not None:
-                filename = '{:s}.{:03d}.csv'.format(
-                    time_shift.format('YYYYMMDDHH'), dtime
+                station_combined = meb.combine_on_id(
+                    station_combined, station_single
                 )
-                sta.to_csv(output_dir / filename, index=False)
-        time_shift = time_shift.shift(hours=12)
+            if station_combined is not None:
+                output_filename = '{:s}.{:03d}.csv'.format(
+                    forecast_reference_time.format('YYYYMMDDHH'), lead_time
+                )
+                station_combined.to_csv(
+                    output_dir / output_filename, index=False
+                )
+        forecast_reference_time = forecast_reference_time.shift(hours=12)
 
 
 if __name__ == '__main__':
@@ -123,13 +135,13 @@ if __name__ == '__main__':
         main(
             input_path=r'\\10.110.173.91\sqxt\EC4AI',
             output_path=r'D:\data\ec_station\wind97',
-            station_information_path=r'D:\Project\wind\国家气象观测站.csv'
+            station_info_path=r'D:\Project\wind\国家气象观测站.csv'
         )
     elif len(sys.argv) == 4:
         main(
             input_path=sys.argv[1],
             output_path=sys.argv[2],
-            station_information_path=sys.argv[3]
+            station_info_path=sys.argv[3]
         )
 
     end = arrow.now()

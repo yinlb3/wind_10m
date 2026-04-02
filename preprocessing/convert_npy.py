@@ -40,10 +40,10 @@ ELEMENTS = (
 
 
 def main(
-    input_path: str,
-    input_path2: str,
+    nwp_csv_path: str,
+    obs_csv_path: str,
     output_path: str,
-    station_information_path: str,
+    station_info_path: str,
     year: int
 ) -> None:
     """
@@ -53,59 +53,67 @@ def main(
     转换为numpy数组并保存, 供模型训练使用。
     
     参数:
-        input_path: EC预报CSV文件目录 (由extract_ec.py生成)
-        input_path2: 国家站观测数据CSV文件目录
+        nwp_csv_path: EC预报CSV文件目录 (由extract_ec.py生成)
+        obs_csv_path: 国家站观测数据CSV文件目录
         output_path: 输出npy文件目录
-        station_information_path: 站点信息CSV文件路径
+        station_info_path: 站点信息CSV文件路径
         year: 处理年份 (2017-2022)
     
     输出:
-        nwp{year}.npy: EC预报数据,
+        nwp{year}.npy: EC数值预报数据,
             shape为 (样本数, 85时效, 97站点, 30要素)
         ob{year}.npy: 观测数据,
             shape为 (样本数, 85时效, 97站点, 8要素)
     """
     # ---- 1. 初始化：读取站点信息和预分配数组 ----
-    station_information = pd.read_csv(
-        station_information_path,
+    station_df = pd.read_csv(
+        station_info_path,
         encoding='gb2312',
         low_memory=False
     )
-    station_information = station_information.loc[:, '台站号'].to_list()
-    station_information.sort()
+    station_ids = station_df.loc[:, '台站号'].to_list()
+    station_ids.sort()
     time_begin = arrow.get(str(year))
     time_end = time_begin.shift(years=1)
-    n = round((time_end - time_begin).total_seconds() / 3600 / 12)
-    nwp = np.zeros((n, 85, 97, 30), dtype=np.float32) + np.nan
-    ob = np.zeros((n, 85, 97, 8), dtype=np.float32) + np.nan
-    print(year, n)
+    # 计算样本数量（每12小时一个起报时刻）
+    sample_count = round(
+        (time_end - time_begin).total_seconds() / 3600 / 12
+    )
+    # NWP: Numerical Weather Prediction (数值预报)
+    nwp_data = np.zeros((sample_count, 85, 97, 30), dtype=np.float32) + np.nan
+    # OBS: Observation (观测数据)
+    obs_data = np.zeros((sample_count, 85, 97, 8), dtype=np.float32) + np.nan
+    print(year, sample_count)
 
-    input_dir = Path(input_path)
-    input_dir2 = Path(input_path2)
+    nwp_dir = Path(nwp_csv_path)
+    obs_dir = Path(obs_csv_path)
     output_dir = Path(output_path)
 
     # ---- 2. 处理EC预报数据（读取CSV并保存npy） ----
-    for i in range(n):
-        time_shift = time_begin.shift(hours=12 * i)
-        for dtime in range(0, 85, 3):
+    for sample_idx in range(sample_count):
+        forecast_reference_time = time_begin.shift(hours=12 * sample_idx)
+        for lead_time in range(0, 85, 3):
             filename = '{:s}.{:03d}.csv'.format(
-                time_shift.format('YYYYMMDDHH'), dtime
+                forecast_reference_time.format('YYYYMMDDHH'), lead_time
             )
-            file_path = input_dir / time_shift.format('YYYY') / filename
+            year_str = forecast_reference_time.format('YYYY')
+            file_path = nwp_dir / year_str / filename
             if file_path.exists():
                 df = pd.read_csv(file_path, low_memory=False)
                 df.sort_values(by=['id'], inplace=True)
                 df.reset_index(drop=True, inplace=True)
-                for j, e in enumerate(ELEMENTS):
-                    nwp[i, dtime, :, j] = df.loc[:, e]
-    np.save(output_dir / 'nwp{:d}.npy'.format(year), nwp)
+                for elem_idx, element in enumerate(ELEMENTS):
+                    nwp_data[sample_idx, lead_time, :, elem_idx] = df.loc[
+                        :, element
+                    ]
+    np.save(file=output_dir / 'nwp{:d}.npy'.format(year), arr=nwp_data)
 
     # ---- 3. 处理观测数据（读取CSV并保存npy） ----
-    for i in range(n):
-        for dtime in range(85):
-            time_shift = time_begin.shift(hours=12 * i + dtime)
-            filename = time_shift.format('YYYYMMDDHH') + '.csv'
-            file_path = input_dir2 / time_shift.format('YYYY') / filename
+    for sample_idx in range(sample_count):
+        for lead_time in range(85):
+            valid_time = time_begin.shift(hours=12 * sample_idx + lead_time)
+            filename = valid_time.format('YYYYMMDDHH') + '.csv'
+            file_path = obs_dir / valid_time.format('YYYY') / filename
             if file_path.exists():
                 df = pd.read_csv(file_path, low_memory=False)
                 # 选择需要的观测要素（8个风要素）
@@ -122,16 +130,21 @@ def main(
                 )]
                 df.sort_values(by=['区站号'], inplace=True)
                 df.reset_index(drop=True, inplace=True)
-                for j in range(8):
+                for obs_var_idx in range(8):
                     if len(df) == 97:
-                        ob[i, dtime, :, j] = df.iloc[:, j + 1]
+                        obs_data[sample_idx, lead_time, :, obs_var_idx] = (
+                            df.iloc[:, obs_var_idx + 1]
+                        )
                     else:
-                        for k in range(len(df)):
-                            sta_id = df.iloc[k, 0]
-                            if sta_id in station_information:
-                                ind = station_information.index(sta_id)
-                                ob[i, dtime, ind, j] = df.iloc[k, j + 1]
-    np.save(output_dir / 'ob{:d}.npy'.format(year), ob)
+                        for row_idx in range(len(df)):
+                            sta_id = df.iloc[row_idx, 0]
+                            if sta_id in station_ids:
+                                station_idx = station_ids.index(sta_id)
+                                obs_data[
+                                    sample_idx, lead_time, station_idx,
+                                    obs_var_idx
+                                ] = df.iloc[row_idx, obs_var_idx + 1]
+    np.save(file=output_dir / 'ob{:d}.npy'.format(year), arr=obs_data)
 
 
 if __name__ == '__main__':
@@ -142,18 +155,18 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         for y in range(2017, 2023):
             main(
-                input_path=r'D:\data\ec_station\wind97',
-                input_path2=r'D:\data\国家站',
+                nwp_csv_path=r'D:\data\ec_station\wind97',
+                obs_csv_path=r'D:\data\国家站',
                 output_path=r'D:\data\wind',
-                station_information_path=r'D:\Project\wind\国家气象观测站.csv',
+                station_info_path=r'D:\Project\wind\国家气象观测站.csv',
                 year=y
             )
     elif len(sys.argv) == 6:
         main(
-            input_path=sys.argv[1],
-            input_path2=sys.argv[2],
+            nwp_csv_path=sys.argv[1],
+            obs_csv_path=sys.argv[2],
             output_path=sys.argv[3],
-            station_information_path=sys.argv[4],
+            station_info_path=sys.argv[4],
             year=int(sys.argv[5])
         )
 
