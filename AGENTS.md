@@ -144,10 +144,6 @@ See `user-preferences` skill for Git workflow. Additional notes:
 
 ### In Progress
 
-| Task | Description | Notes |
-|------|-------------|-------|
-| Code review and cleanup | Check code quality of each module and ensure data flow is correct | Focus on lead time matching logic |
-
 ### Todo
 
 | Task | Description | Priority |
@@ -155,4 +151,4 @@ See `user-preferences` skill for Git workflow. Additional notes:
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-07-22
+**Last Updated**: 2026-07-25
