@@ -1,30 +1,51 @@
-#!user/bin.python3
+# -*- coding: utf-8 -*-
 
 """
 Founded in 2024-07-27
-Modified in 2024-07-27
+Modified in 2026-07-21
 @author: yinlb
 """
+import os
+import pathlib
+import sys
 import typing
 
-import joblib
-import os
-import sys
-
 import arrow
+import joblib
 import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 
+from src import utils
+
 
 RANDOM_SEED = 20230718
+cfg = utils.load_config()
 
 
 def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
+    """Interpolate forecast data to fill intermediate lead times.
+
+    Linear interpolation between 3-hourly EC forecast lead times to
+    produce hourly values for the selected forecast window.
+
+    Args:
+        data: Input array with shape (samples, lead_times, stations, features).
+        is_0_84: Whether to interpolate the full 0-84 hour range.
+
+    Returns:
+        The interpolated array with the same shape as input.
+    """
     if is_0_84:
         for i in range(24):
-            data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-            data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
+            data[:, 3 * i + 1, :, :] = (
+                data[:, 3 * i, :, :] * 2 / 3 +
+                data[:, 3 * i + 3, :, :] / 3
+            )
+            data[:, 3 * i + 2, :, :] = (
+                data[:, 3 * i, :, :] / 3 +
+                data[:, 3 * i + 3, :, :] * 2 / 3
+            )
         data[:, 73, :, :] = data[:, 72, :, :] * 5 / 6 + data[:, 78, :, :] / 6
         data[:, 74, :, :] = data[:, 72, :, :] * 2 / 3 + data[:, 78, :, :] / 3
         data[:, 75, :, :] = data[:, 72, :, :] / 2 + data[:, 78, :, :] / 2
@@ -37,149 +58,259 @@ def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
         data[:, 83, :, :] = data[:, 78, :, :] / 6 + data[:, 84, :, :] * 5 / 6
     else:
         for i in range(8):
-            data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-            data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
+            data[:, 3 * i + 1, :, :] = (
+                data[:, 3 * i, :, :] * 2 / 3 +
+                data[:, 3 * i + 3, :, :] / 3
+            )
+            data[:, 3 * i + 2, :, :] = (
+                data[:, 3 * i, :, :] / 3 +
+                data[:, 3 * i + 3, :, :] * 2 / 3
+            )
     return data
 
 
-def uv_to_ds(uv: np.ndarray) -> np.ndarray:
-    ds = np.zeros_like(uv, dtype=np.float32) + np.nan
-    ds[:, :, :, 1] = np.sqrt(uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2)
-    ds[:, :, :, 0] = 180 + np.arctan2(uv[:, :, :, 0], uv[:, :, :, 1]) * 180 / np.pi
-    return ds
+def uv_to_ds(uv_data: np.ndarray) -> np.ndarray:
+    """Convert U/V wind components to direction and speed.
+
+    Args:
+        uv_data: Array with U and V wind components in the last dimension.
+
+    Returns:
+        Array with wind direction (degrees) and speed (m/s).
+    """
+    dir_speed = np.zeros_like(uv_data, dtype=np.float32) + np.nan
+    dir_speed[:, :, :, 1] = np.sqrt(
+        uv_data[:, :, :, 0] ** 2 + uv_data[:, :, :, 1] ** 2
+    )
+    dir_speed[:, :, :, 0] = 180 + np.arctan2(
+        uv_data[:, :, :, 0], uv_data[:, :, :, 1]
+    ) * 180 / np.pi
+    return dir_speed
 
 
 def train(data: np.ndarray, label: np.ndarray) -> lgbm.LGBMRegressor:
-    index = ~np.isnan(label)
+    """Train a single LightGBM regressor.
+
+    Args:
+        data: Training features, shape (samples, lead_times, stations, features)
+        label: Training targets, shape (samples, lead_times, stations).
+
+    Returns:
+        Trained LightGBM regressor.
+    """
+    valid = ~np.isnan(label)
     for i in range(data.shape[-1]):
-        index &= ~np.isnan(data[:, :, :, i])
-    x = data[index, :]
-    y = label[index]
-    model = lgbm.LGBMRegressor(n_jobs=20, verbose=-1, force_col_wise=True, random_state=RANDOM_SEED)
-    model.fit(x, y)
+        valid &= ~np.isnan(data[:, :, :, i])
+    features = data[valid, :]
+    target = label[valid]
+    model = lgbm.LGBMRegressor(
+        n_jobs=20, verbose=-1, force_col_wise=True, random_state=RANDOM_SEED
+    )
+    model.fit(features, target)
     return model
 
 
 def train2(data: np.ndarray, label: np.ndarray, option: int) -> typing.List:
+    """Train LightGBM regressors for the selected option.
+
+    Options:
+        1: single model for all lead times and stations.
+        2: one model per lead time.
+        3: one model per station.
+        4: one model per lead time and station.
+
+    Args:
+        data: Training features.
+        label: Training targets.
+        option: Training strategy (1-4).
+
+    Returns:
+        List of trained models.
+    """
     models = list()
-    a, b, c, d = data.shape
+    n_samples, n_lead, n_stations, n_features = data.shape
     if option == 1:
         models.append(train(data, label))
     elif option == 2:
-        for i in range(b):
-            temp_data = np.reshape(data[:, i, :, :], newshape=(a, 1, c, d))
-            temp_label = np.reshape(label[:, i, :], newshape=(a, 1, c))
-            models.append(train(temp_data, temp_label))
+        for i in range(n_lead):
+            lead_data = np.reshape(
+                data[:, i, :, :], newshape=(
+                    n_samples, 1, n_stations, n_features
+                )
+            )
+            lead_label = np.reshape(
+                label[:, i, :], newshape=(n_samples, 1, n_stations)
+            )
+            models.append(train(lead_data, lead_label))
     elif option == 3:
-        for i in range(c):
-            temp_data = np.reshape(data[:, :, i, :], newshape=(a, b, 1, d))
-            temp_label = np.reshape(label[:, :, i], newshape=(a, b, 1))
-            models.append(train(temp_data, temp_label))
+        for i in range(n_stations):
+            sta_data = np.reshape(
+                data[:, :, i, :], newshape=(n_samples, n_lead, 1, n_features)
+            )
+            sta_label = np.reshape(
+                label[:, :, i], newshape=(n_samples, n_lead, 1)
+            )
+            models.append(train(sta_data, sta_label))
     elif option == 4:
-        for i in range(b):
+        for i in range(n_lead):
             models.append(list())
-            for j in range(c):
-                temp_data = np.reshape(data[:, i, j, :], newshape=(a, 1, 1, d))
-                temp_label = np.reshape(label[:, i, j], newshape=(a, 1, 1))
-                models[i].append(train(temp_data, temp_label))
+            for j in range(n_stations):
+                cell_data = np.reshape(
+                    data[:, i, j, :], newshape=(n_samples, 1, 1, n_features)
+                )
+                cell_label = np.reshape(
+                    label[:, i, j], newshape=(n_samples, 1, 1)
+                )
+                models[i].append(train(cell_data, cell_label))
     return models
 
 
 def test(model: lgbm.LGBMRegressor, data: np.ndarray) -> np.ndarray:
-    index = np.ones_like(data[:, :, :, 0], dtype=np.bool_)
+    """Predict with a single LightGBM regressor.
+
+    Args:
+        model: Trained LightGBM regressor.
+        data: Input features.
+
+    Returns:
+        Predicted values with the same spatial shape as input.
+    """
+    valid = np.ones_like(data[:, :, :, 0], dtype=np.bool_)
     for i in range(data.shape[-1]):
-        index &= ~np.isnan(data[:, :, :, i])
-    label = np.zeros_like(data[:, :, :, 0], dtype=np.float32) + np.nan
-    x = data[index, :]
-    label[index] = model.predict(x)
-    return label
+        valid &= ~np.isnan(data[:, :, :, i])
+    pred = np.zeros_like(data[:, :, :, 0], dtype=np.float32) + np.nan
+    features = data[valid, :]
+    pred[valid] = model.predict(features)
+    return pred
 
 
 def test2(models: typing.List, data: np.ndarray, option: int) -> np.ndarray:
-    a, b, c, d = data.shape
-    label = np.zeros(shape=(a, b, c), dtype=data.dtype) + np.nan
+    """Predict with the selected model configuration.
+
+    Args:
+        models: List of trained models.
+        data: Input features.
+        option: Prediction strategy (1-4).
+
+    Returns:
+        Predicted values.
+    """
+    n_samples, n_lead, n_stations, n_features = data.shape
+    pred = np.zeros(
+        shape=(n_samples, n_lead, n_stations), dtype=data.dtype
+    ) + np.nan
     if option == 1:
-        label = test(models[0], data)
+        pred = test(models[0], data)
     elif option == 2:
-        for i in range(b):
+        for i in range(n_lead):
             model = models[i]
-            temp_data = np.reshape(data[:, i, :, :], newshape=(a, 1, c, d))
-            temp_label = test(model, temp_data)
-            label[:, i, :] = np.reshape(temp_label, newshape=(a, c))
+            lead_data = np.reshape(
+                data[:, i, :, :], newshape=(
+                    n_samples, 1, n_stations, n_features
+                )
+            )
+            lead_pred = test(model, lead_data)
+            pred[:, i, :] = np.reshape(
+                lead_pred, newshape=(n_samples, n_stations)
+            )
     elif option == 3:
-        for i in range(c):
+        for i in range(n_stations):
             model = models[i]
-            temp_data = np.reshape(data[:, :, i, :], newshape=(a, b, 1, d))
-            temp_label = test(model, temp_data)
-            label[:, :, i] = np.reshape(temp_label, newshape=(a, b))
+            sta_data = np.reshape(
+                data[:, :, i, :], newshape=(n_samples, n_lead, 1, n_features)
+            )
+            sta_pred = test(model, sta_data)
+            pred[:, :, i] = np.reshape(
+                sta_pred, newshape=(n_samples, n_lead)
+            )
     elif option == 4:
-        for i in range(b):
-            for j in range(c):
+        for i in range(n_lead):
+            for j in range(n_stations):
                 model = models[i][j]
-                temp_data = np.reshape(data[:, i, j, :], newshape=(a, 1, 1, d))
-                temp_label = test(model, temp_data)
-                label[:, i, j] = np.reshape(temp_label, newshape=a)
-    return label
+                cell_data = np.reshape(
+                    data[:, i, j, :], newshape=(n_samples, 1, 1, n_features)
+                )
+                cell_pred = test(model, cell_data)
+                pred[:, i, j] = np.reshape(cell_pred, newshape=n_samples)
+    return pred
 
 
 def test3(models: typing.List, data: np.ndarray, option: int) -> np.ndarray:
-    a, b, c, d = data.shape
-    label = np.zeros(shape=(c, a, b, c), dtype=data.dtype) + np.nan
-    if option == 3:
-        for i in range(c):
-            model = models[i]
-            for j in range(c):
-                temp_data = np.reshape(data[:, :, j, :], newshape=(a, b, 1, d))
-                temp_label = test(model, temp_data)
-                label[i, :, :, j] = np.reshape(temp_label, newshape=(a, b))
-    return label
+    """Predict with station-wise models applied to all stations.
 
+    This is a variant of option 3 where each station model is used to
+    predict every station, producing a cross-station prediction matrix.
 
-def format_time(second: float, is_abbreviation: bool = False) -> str:
-    r"""Format time.
+    Args:
+        models: List of trained station models.
+        data: Input features.
+        option: Must be 3 for this function.
 
-    :param second: A float number representing the number of seconds.
-    :param is_abbreviation: A boolean variable representing whether processing to abbreviation.
-        The default value is False.
-    :return: A sequence of strings representing the time. For example: '43.5 seconds'
-    :raise ValueError: The value of input parameter 'second' is wrong.
+    Returns:
+        Cross-station predictions with shape
+        (stations, samples, lead_times, stations).
     """
-    if second < 0:
-        raise ValueError('The input parameter "second" cannot be negative.')
-    elif is_abbreviation:
-        if second <= 60:
-            time_str = str(second) + 's'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'm'
-        else:
-            time_str = str(second / 3600) + 'h'
-    else:
-        if second <= 1:
-            time_str = str(second) + ' second'
-        elif second <= 60:
-            time_str = str(second) + ' seconds'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'minutes'
-        else:
-            time_str = str(second / 3600) + 'hours'
+    n_samples, n_lead, n_stations, n_features = data.shape
+    pred = np.zeros(
+        shape=(n_stations, n_samples, n_lead, n_stations),
+        dtype=data.dtype
+    ) + np.nan
+    if option == 3:
+        for i in range(n_stations):
+            model = models[i]
+            for j in range(n_stations):
+                sta_data = np.reshape(
+                    data[:, :, j, :], newshape=(
+                        n_samples, n_lead, 1, n_features
+                    )
+                )
+                sta_pred = test(model, sta_data)
+                pred[i, :, :, j] = np.reshape(
+                    sta_pred, newshape=(n_samples, n_lead)
+                )
+    return pred
 
-    return time_str
 
+def main(
+    input_path: str,
+    model_path: str,
+    output_path: str,
+    station_csv_path: str,
+) -> None:
+    """Run cross-validation prediction for 2017-2022.
 
-def main(input_path: str, model_path: str, output_path: str, station_information_path: str):
-    station_information = pd.read_csv(station_information_path, encoding='gb2312', low_memory=False)
-    station_information.sort_values(by=['台站号'], inplace=True)
-    station_information.reset_index(drop=True, inplace=True)
+    Args:
+        input_path: Directory containing nwp{year}.npy and ob{year}.npy files.
+        model_path: Directory containing trained model files.
+        output_path: Directory where prediction files will be saved.
+        station_csv_path: Path to the station information CSV.
+    """
+    input_path = pathlib.Path(input_path)
+    model_path = pathlib.Path(model_path)
+    output_path = pathlib.Path(output_path)
+    station_csv_path = pathlib.Path(station_csv_path)
+    os.makedirs(output_path, exist_ok=True)
+
+    station_info = pd.read_csv(
+        station_csv_path, encoding='gb2312', low_memory=False
+    )
+    station_info.sort_values(by=['台站号'], inplace=True)
+    station_info.reset_index(drop=True, inplace=True)
 
     data_list = list()
     label_list = list()
-    for i in range(2017, 2023):
-        data_list.append(np.load(os.path.join(input_path, 'nwp{:d}.npy'.format(i))))
-        label_list.append(np.load(os.path.join(input_path, 'ob{:d}.npy'.format(i))))
-        print(i)
+    years = cfg['constants']['years']
+    for year in years:
+        data_list.append(np.load(
+            input_path / 'nwp{:d}.npy'.format(year)
+        ))
+        label_list.append(np.load(
+            input_path / 'ob{:d}.npy'.format(year)
+        ))
+        print('Loading year:', year)
 
     for i in range(4, 6):
-        year = 2017 + i
+        year = years[i]
         data_list2 = data_list.copy()
         data_list2.pop(i)
         label_list2 = label_list.copy()
@@ -198,25 +329,33 @@ def main(input_path: str, model_path: str, output_path: str, station_information
         test_label[test_label > 100] = np.nan
         nwp_train_label = uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
         nwp_test_label = uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
-        models = joblib.load(rf'E:\123\model\wind5\lgb_{year}.joblib')
-        # joblib.dump(models, os.path.join(model_path, 'lgb_{:d}.joblib'.format(year)))
-        # predict_label = test(model, test_data)
-        # predict_label = nwp_test_label - test(model, test_data)
+        models = joblib.load(model_path / f'lgb_{year}.joblib')
         predict_label = test3(models, test_data, 3)
-        np.save(os.path.join(output_path, f'lgb_3_{year}_cross.npy'), predict_label)
+        np.save(
+            output_path / f'lgb_3_{year}_cross.npy',
+            predict_label
+        )
 
 
 if __name__ == '__main__':
-    print('The program "LightGBM.py" is beginning.')
-    start = arrow.now()
+    print('Program lgb_predict.py started')
+    total_start = arrow.now()
 
     if len(sys.argv) == 1:
-        main(r'D:\data\wind', r'D:\model\wind5', r'D:\Project\wind\97',
-             r'D:\Project\wind\国家气象观测站.csv')
+        main(
+            input_path=cfg['paths']['wind_data'],
+            model_path=cfg['paths']['wind5_model'],
+            output_path=str(
+                pathlib.Path(cfg['paths']['project_wind']) / '97'
+            ),
+            station_csv_path=cfg['paths']['station_csv'],
+        )
     elif len(sys.argv) == 5:
         main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
 
-    end = arrow.now()
-    running_time = (end - start).total_seconds()
-
-    print('The program "LightGBM.py" runs out in {:s}.'.format(format_time(running_time)))
+    total_elapsed = (arrow.now() - total_start).total_seconds()
+    print(
+        'Program lgb_predict.py finished, total time {}'.format(
+            utils.format_time(total_elapsed)
+        )
+    )

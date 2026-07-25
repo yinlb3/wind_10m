@@ -1,187 +1,316 @@
-#!user/bin.python3
+# -*- coding: utf-8 -*-
 
 """
 Founded in 2024-07-27
-Modified in 2024-07-27
+Modified in 2026-07-21
 @author: yinlb
 """
 import os
-import sys
+import pathlib
 
 import arrow
 import numpy as np
 
-
-THRES = (0.3, 1.6, 3.4, 5.5, 8.0)
-E = 1e-7
+from src import utils
 
 
-def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
-    if is_0_84:
-        for i in range(24):
-            data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-            data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
-        data[:, 73, :, :] = data[:, 72, :, :] * 5 / 6 + data[:, 78, :, :] / 6
-        data[:, 74, :, :] = data[:, 72, :, :] * 2 / 3 + data[:, 78, :, :] / 3
-        data[:, 75, :, :] = data[:, 72, :, :] / 2 + data[:, 78, :, :] / 2
-        data[:, 76, :, :] = data[:, 72, :, :] / 3 + data[:, 78, :, :] * 2 / 3
-        data[:, 77, :, :] = data[:, 72, :, :] / 6 + data[:, 78, :, :] * 5 / 6
-        data[:, 79, :, :] = data[:, 78, :, :] * 5 / 6 + data[:, 84, :, :] / 6
-        data[:, 80, :, :] = data[:, 78, :, :] * 2 / 3 + data[:, 84, :, :] / 3
-        data[:, 81, :, :] = data[:, 78, :, :] / 2 + data[:, 84, :, :] / 2
-        data[:, 82, :, :] = data[:, 78, :, :] / 3 + data[:, 84, :, :] * 2 / 3
-        data[:, 83, :, :] = data[:, 78, :, :] / 6 + data[:, 84, :, :] * 5 / 6
-    else:
-        for i in range(8):
-            data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-            data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
-    return data
+THRESHOLDS = (0.3, 1.6, 3.4, 5.5, 8.0)
+EPS = 1e-7
 
 
-def uv_to_ds(uv: np.ndarray) -> np.ndarray:
-    ds = np.zeros_like(uv, dtype=np.float32) + np.nan
-    ds[:, :, :, 1] = np.sqrt(uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2)
-    ds[:, :, :, 0] = 180 + np.arctan2(uv[:, :, :, 0], uv[:, :, :, 1]) * 180 / np.pi
-    return ds
-
-
-def ots(train_nwp: np.ndarray, train_ob: np.ndarray, test_nwp: np.ndarray) -> np.ndarray:
-    thres0 = list(THRES).copy()
-    thres0.reverse()
-    t = 11
-    thres = list()
-    t0max = 100
-    tmax = 100
-    for t0 in thres0:
-        if np.sum(train_ob >= t0) == 0:
-            thres.append(t0)
-            tmax = t0
-            t0max = t0
-            continue
-        ts_list = list()
-        t_list = list()
-        while abs(t) > E:
-            na = np.sum(((train_nwp >= t) & (train_nwp < tmax)) & ((train_ob >= t0) & (train_nwp < t0max)))
-            nb = np.sum(((train_nwp >= t) & (train_nwp < tmax)) & ((train_ob < t0) | (train_nwp >= t0max)))
-            nc = np.sum(((train_nwp < t) | (train_nwp >= tmax)) & ((train_ob >= t0) & (train_nwp < t0max)))
-            ts_list.append(na / (na + nb + nc + E))
-            t_list.append(t)
-            t -= 0.1
-        t = t_list[np.argmax(ts_list)]
-        thres.append(t)
-        tmax = t
-        t0max = t0
-    thres.reverse()
-    thres0.reverse()
-    pr = np.zeros_like(test_nwp, dtype=np.float32) + np.nan
-    index = test_nwp < thres[0]
-    pr[index] = test_nwp[index] / thres[0] * thres0[0]
-    for i in range(len(thres) - 1):
-        index = (test_nwp >= thres[i]) & (test_nwp < thres[i + 1])
-        pr[index] = (test_nwp[index] - thres[i]) / (thres[i + 1] - thres[i]) * (thres0[i + 1] - thres0[i]) + thres0[i]
-    index = test_nwp >= thres[-1]
-    pr[index] = test_nwp[index] / thres[-1] * thres0[-1]
-    # print(thres)
-
-    return pr
-
-
-def format_time(second: float, is_abbreviation: bool = False) -> str:
-    r"""Format time.
-
-    :param second: A float number representing the number of seconds.
-    :param is_abbreviation: A boolean variable representing whether processing to abbreviation.
-        The default value is False.
-    :return: A sequence of strings representing the time. For example: '43.5 seconds'
-    :raise ValueError: The value of input parameter 'second' is wrong.
+def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
     """
-    if second < 0:
-        raise ValueError('The input parameter "second" cannot be negative.')
-    elif is_abbreviation:
-        if second <= 60:
-            time_str = str(second) + 's'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'm'
-        else:
-            time_str = str(second / 3600) + 'h'
+    Linearly interpolate NWP fields from 3-hourly to hourly intervals.
+
+    Args:
+        data: Input array with a 3-hourly lead-time dimension.
+        is_0_84: If True, interpolate the full 0-84 h range; otherwise
+            interpolate the first 0-24 h range.
+
+    Returns:
+        Array with hourly interpolated values.
+    """
+    # Operate on a copy to avoid mutating the caller's array.
+    out = data.copy()
+    if is_0_84:
+        # 1. Interpolate the 24 segments of 3-hourly data to hourly.
+        for i in range(24):
+            out[:, 3 * i + 1, :, :] = (
+                out[:, 3 * i, :, :] * 2 / 3
+                + out[:, 3 * i + 3, :, :] / 3
+            )
+            out[:, 3 * i + 2, :, :] = (
+                out[:, 3 * i, :, :] / 3
+                + out[:, 3 * i + 3, :, :] * 2 / 3
+            )
+        # 2. Interpolate the transition from hour 72 to 78 and 78 to 84.
+        out[:, 73, :, :] = (
+            out[:, 72, :, :] * 5 / 6
+            + out[:, 78, :, :] / 6
+        )
+        out[:, 74, :, :] = (
+            out[:, 72, :, :] * 2 / 3
+            + out[:, 78, :, :] / 3
+        )
+        out[:, 75, :, :] = (
+            out[:, 72, :, :] / 2
+            + out[:, 78, :, :] / 2
+        )
+        out[:, 76, :, :] = (
+            out[:, 72, :, :] / 3
+            + out[:, 78, :, :] * 2 / 3
+        )
+        out[:, 77, :, :] = (
+            out[:, 72, :, :] / 6
+            + out[:, 78, :, :] * 5 / 6
+        )
+        out[:, 79, :, :] = (
+            out[:, 78, :, :] * 5 / 6
+            + out[:, 84, :, :] / 6
+        )
+        out[:, 80, :, :] = (
+            out[:, 78, :, :] * 2 / 3
+            + out[:, 84, :, :] / 3
+        )
+        out[:, 81, :, :] = (
+            out[:, 78, :, :] / 2
+            + out[:, 84, :, :] / 2
+        )
+        out[:, 82, :, :] = (
+            out[:, 78, :, :] / 3
+            + out[:, 84, :, :] * 2 / 3
+        )
+        out[:, 83, :, :] = (
+            out[:, 78, :, :] / 6
+            + out[:, 84, :, :] * 5 / 6
+        )
     else:
-        if second <= 1:
-            time_str = str(second) + ' second'
-        elif second <= 60:
-            time_str = str(second) + ' seconds'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'minutes'
-        else:
-            time_str = str(second / 3600) + 'hours'
+        # Interpolate the first 0-24 h range.
+        for i in range(8):
+            out[:, 3 * i + 1, :, :] = (
+                out[:, 3 * i, :, :] * 2 / 3
+                + out[:, 3 * i + 3, :, :] / 3
+            )
+            out[:, 3 * i + 2, :, :] = (
+                out[:, 3 * i, :, :] / 3
+                + out[:, 3 * i + 3, :, :] * 2 / 3
+            )
+    return out
 
-    return time_str
+
+def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
+    """
+    Convert UV wind components to wind speed and direction.
+
+    Args:
+        uv: Array whose last dimension holds [U, V] components.
+
+    Returns:
+        Array whose last dimension holds [direction, speed].
+    """
+    out = np.zeros_like(uv, dtype=np.float32) + np.nan
+    out[:, :, :, 1] = np.sqrt(
+        uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2
+    )
+    out[:, :, :, 0] = 180 + np.arctan2(
+        uv[:, :, :, 0], uv[:, :, :, 1]
+    ) * 180 / np.pi
+    return out
 
 
-def main(input_path: str, output_path: str) -> None:
-    data_list = list()
-    label_list = list()
-    for i in range(2017, 2023):
-        data_list.append(np.load(os.path.join(input_path, 'nwp{:d}.npy'.format(i))))
-        label_list.append(np.load(os.path.join(input_path, 'ob{:d}.npy'.format(i))))
-        # print(i)
+def _ots(
+    train_nwp: np.ndarray,
+    train_obs: np.ndarray,
+    test_nwp: np.ndarray,
+) -> np.ndarray:
+    """
+    Apply optimal threshold selection (OTS) to a forecast field.
 
-    for i in range(6):
-        year = 2017 + i
-        data_list2 = data_list.copy()
-        data_list2.pop(i)
-        label_list2 = label_list.copy()
-        label_list2.pop(i)
-        data = np.vstack(data_list2)
-        train_data = data
-        train_data = interp(train_data[:, 12:37, :, :])[:, 1:, :, :]
-        train_label = np.vstack(label_list2)
-        train_label = train_label[:, 13:37, :, 3]
-        train_label[train_label > 100] = np.nan
-        data = data_list[i]
-        test_data = data
-        test_data = interp(test_data[:, 12:37, :, :])[:, 1:, :, :]
-        test_label = label_list[i]
-        test_label = test_label[:, 13:37, :, 3]
-        test_label[test_label > 100] = np.nan
-        nwp_train_label = uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
-        nwp_test_label = uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
-        # 方案一
-        predict_label = ots(nwp_train_label, train_label, nwp_test_label)
-        np.save(os.path.join(output_path, f'ob_1_{year}.npy'), test_label)
-        np.save(os.path.join(output_path, f'ots_1_{year}.npy'), predict_label)
-        np.save(os.path.join(output_path, f'nwp_1_{year}.npy'), nwp_test_label)
-        # 方案二
-        predict_label = np.zeros_like(nwp_test_label) + np.nan
+    The algorithm derives a piecewise linear mapping from raw NWP values
+    to corrected values by searching thresholds that maximize the Threat
+    Score for each reference observation level.
+
+    Args:
+        train_nwp: Raw NWP forecast samples used for training.
+        train_obs: Observed samples used as the reference for training.
+        test_nwp: Raw NWP forecast samples to be corrected.
+
+    Returns:
+        Corrected forecast samples.
+    """
+    # 1. Reference thresholds are processed from high to low.
+    obs_thresholds = list(THRESHOLDS).copy()
+    obs_thresholds.reverse()
+
+    threshold = 11.0
+    fcst_thresholds = list()
+    fcst_upper = 100.0
+    obs_upper = 100.0
+    for ref_threshold in obs_thresholds:
+        if np.sum(train_obs >= ref_threshold) == 0:
+            fcst_thresholds.append(ref_threshold)
+            fcst_upper = ref_threshold
+            obs_upper = ref_threshold
+            continue
+
+        # 2. Search the threshold that maximizes the Threat Score.
+        ts_scores = list()
+        tested_thresholds = list()
+        while abs(threshold) > EPS:
+            count_a = np.sum(
+                ((train_nwp >= threshold) & (train_nwp < fcst_upper))
+                & ((train_obs >= ref_threshold) & (train_nwp < obs_upper))
+            )
+            count_b = np.sum(
+                ((train_nwp >= threshold) & (train_nwp < fcst_upper))
+                & ((train_obs < ref_threshold) | (train_nwp >= obs_upper))
+            )
+            count_c = np.sum(
+                ((train_nwp < threshold) | (train_nwp >= fcst_upper))
+                & ((train_obs >= ref_threshold) & (train_nwp < obs_upper))
+            )
+            ts_scores.append(
+                count_a / (count_a + count_b + count_c + EPS)
+            )
+            tested_thresholds.append(threshold)
+            threshold -= 0.1
+
+        best_idx = int(np.argmax(ts_scores))
+        threshold = tested_thresholds[best_idx]
+        fcst_thresholds.append(threshold)
+        fcst_upper = threshold
+        obs_upper = ref_threshold
+
+    # 3. Restore increasing order for both threshold lists.
+    fcst_thresholds.reverse()
+    obs_thresholds.reverse()
+
+    # 4. Map the test forecast to the corrected values.
+    corrected = np.zeros_like(test_nwp, dtype=np.float32) + np.nan
+    mask = test_nwp < fcst_thresholds[0]
+    corrected[mask] = test_nwp[mask] / fcst_thresholds[0] * obs_thresholds[0]
+
+    for i in range(len(fcst_thresholds) - 1):
+        lower = fcst_thresholds[i]
+        upper = fcst_thresholds[i + 1]
+        lower_obs = obs_thresholds[i]
+        upper_obs = obs_thresholds[i + 1]
+        mask = (test_nwp >= lower) & (test_nwp < upper)
+        corrected[mask] = (
+            (test_nwp[mask] - lower) / (upper - lower)
+            * (upper_obs - lower_obs)
+            + lower_obs
+        )
+
+    mask = test_nwp >= fcst_thresholds[-1]
+    corrected[mask] = (
+        test_nwp[mask] / fcst_thresholds[-1] * obs_thresholds[-1]
+    )
+
+    return corrected
+
+
+
+def main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
+    """
+    Run OTS correction for each cross-validation year.
+
+    Args:
+        input_path: Directory containing nwp{year}.npy and ob{year}.npy.
+        output_path: Directory where the corrected arrays are saved.
+    """
+    cfg = utils.load_config()
+    years = cfg['constants']['years']
+
+    # 1. Load all years of NWP and observation data.
+    nwp_years = list()
+    obs_years = list()
+    for year in years:
+        nwp_years.append(np.load(input_path / 'nwp{:d}.npy'.format(year)))
+        obs_years.append(np.load(input_path / 'ob{:d}.npy'.format(year)))
+
+    # 2. Cross-validate: leave one year out for testing.
+    for i in range(len(nwp_years)):
+        year = years[i]
+        nwp_train_list = nwp_years.copy()
+        nwp_train_list.pop(i)
+        obs_train_list = obs_years.copy()
+        obs_train_list.pop(i)
+
+        train_data = np.vstack(nwp_train_list)
+        train_data = _interp(train_data[:, 12:37, :, :])[:, 1:, :, :]
+        train_obs = np.vstack(obs_train_list)
+        train_obs = train_obs[:, 13:37, :, 3]
+        train_obs[train_obs > 100] = np.nan
+
+        test_data = nwp_years[i]
+        test_data = _interp(test_data[:, 12:37, :, :])[:, 1:, :, :]
+        test_obs = obs_years[i]
+        test_obs = test_obs[:, 13:37, :, 3]
+        test_obs[test_obs > 100] = np.nan
+
+        nwp_train_speed = _uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
+        nwp_test_speed = _uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
+
+        # 3. Scheme 1: one global OTS mapping.
+        predict_speed = _ots(nwp_train_speed, train_obs, nwp_test_speed)
+        np.save(output_path / f'ob_1_{year}.npy', test_obs)
+        np.save(output_path / f'ots_1_{year}.npy', predict_speed)
+        np.save(output_path / f'nwp_1_{year}.npy', nwp_test_speed)
+
+        # 4. Scheme 2: per-lead-time OTS mapping.
+        predict_speed = np.zeros_like(nwp_test_speed) + np.nan
         for j in range(24):
-            predict_label[:, j, :] = ots(nwp_train_label[:, j, :], train_label[:, j, :], nwp_test_label[:, j, :])
-        np.save(os.path.join(output_path, f'ob_2_{year}.npy'), test_label)
-        np.save(os.path.join(output_path, f'ots_2_{year}.npy'), predict_label)
-        np.save(os.path.join(output_path, f'nwp_2_{year}.npy'), nwp_test_label)
-        # 方案三
-        predict_label = np.zeros_like(nwp_test_label) + np.nan
+            predict_speed[:, j, :] = _ots(
+                nwp_train_speed[:, j, :],
+                train_obs[:, j, :],
+                nwp_test_speed[:, j, :],
+            )
+        np.save(output_path / f'ob_2_{year}.npy', test_obs)
+        np.save(output_path / f'ots_2_{year}.npy', predict_speed)
+        np.save(output_path / f'nwp_2_{year}.npy', nwp_test_speed)
+
+        # 5. Scheme 3: per-station OTS mapping.
+        predict_speed = np.zeros_like(nwp_test_speed) + np.nan
         for j in range(97):
-            predict_label[:, :, j] = ots(nwp_train_label[:, :, j], train_label[:, :, j], nwp_test_label[:, :, j])
-        np.save(os.path.join(output_path, f'ob_3_{year}.npy'), test_label)
-        np.save(os.path.join(output_path, f'ots_3_{year}.npy'), predict_label)
-        np.save(os.path.join(output_path, f'nwp_3_{year}.npy'), nwp_test_label)
-        # 方案四
-        predict_label = np.zeros_like(nwp_test_label) + np.nan
+            predict_speed[:, :, j] = _ots(
+                nwp_train_speed[:, :, j],
+                train_obs[:, :, j],
+                nwp_test_speed[:, :, j],
+            )
+        np.save(output_path / f'ob_3_{year}.npy', test_obs)
+        np.save(output_path / f'ots_3_{year}.npy', predict_speed)
+        np.save(output_path / f'nwp_3_{year}.npy', nwp_test_speed)
+
+        # 6. Scheme 4: nested lead-time OTS mapping.
+        predict_speed = np.zeros_like(nwp_test_speed) + np.nan
         for j in range(24):
             for k in range(24):
-                predict_label[:, j, k] = ots(nwp_train_label[:, j, k], train_label[:, j, k], nwp_test_label[:, j, k])
-        np.save(os.path.join(output_path, f'ob_4_{year}.npy'), test_label)
-        np.save(os.path.join(output_path, f'ots_4_{year}.npy'), predict_label)
-        np.save(os.path.join(output_path, f'nwp_4_{year}.npy'), nwp_test_label)
-        print(year)
+                predict_speed[:, j, k] = _ots(
+                    nwp_train_speed[:, j, k],
+                    train_obs[:, j, k],
+                    nwp_test_speed[:, j, k],
+                )
+        np.save(output_path / f'ob_4_{year}.npy', test_obs)
+        np.save(output_path / f'ots_4_{year}.npy', predict_speed)
+        np.save(output_path / f'nwp_4_{year}.npy', nwp_test_speed)
+
+        print(f'Finished OTS correction for year {year}.')
 
 
 if __name__ == '__main__':
-    print('The program "ots.py" is beginning.')
-    start = arrow.now()
+    print('Program ots.py started.')
+    total_start = arrow.now()
 
-    main(r'D:\data\wind', r'D:\Project\wind\97')
+    cfg = utils.load_config()
+    input_path = pathlib.Path(cfg['paths']['wind_data'])
+    output_path = pathlib.Path(cfg['paths']['project_wind']) / '97'
+    os.makedirs(output_path, exist_ok=True)
 
-    end = arrow.now()
-    running_time = (end - start).total_seconds()
+    main(input_path, output_path)
 
-    print('The program "ots.py" runs out in {:s}.'.format(format_time(running_time)))
+    total_elapsed = (arrow.now() - total_start).total_seconds()
+    print(
+        'Program ots.py finished, total time '
+        f'{utils.format_time(total_elapsed)}.'
+    )

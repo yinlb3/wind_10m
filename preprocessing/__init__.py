@@ -1,1 +1,2 @@
-# preprocessing 包初始化
+# -*- coding: utf-8 -*-
+"""Preprocessing package initialization."""

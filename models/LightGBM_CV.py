@@ -1,141 +1,192 @@
-#!user/bin.python3
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 """
 Founded in 2023-08-01
-Modified in 2023-08-01
+Modified in 2026-07-21
 @author: yinlb
 """
-import os
+import pathlib
 import sys
+from typing import List
 
 import arrow
 import lightgbm as lgb
 import numpy as np
 from sklearn import model_selection as ms
 
+from src import utils
+
 
 RANDOM_SEED = 20230718
 
 
-def interp(data: np.ndarray) -> np.ndarray:
-    for i in range(8):
-        data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-        data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
-    return data[:, 1:, :, :]
-
-
-def clean(data: np.ndarray) -> np.ndarray:
-    no_wind = (data[:, 1:, :, 0] == 999017) & (data[:, 1:, :, 1] == 0)
-    index0 = data[:, 1:, :, 0] <= 360
-    index1 = data[:, 1:, :, 1] < 999017
-    delta = data[:, 1:, :, 1] - data[:, :-1, :, 1]
-    index1 &= np.abs(delta) < 10
-    index0 |= no_wind
-    index = index0 & index1
-    data = data[:, 1:, :, :]
-    data[~index, :] = np.nan
-    return data
-
-
-def ds_to_uv(ds: np.ndarray) -> np.ndarray:
-    no_wind = ds[:, :, :, 0] == 999017
-    uv = np.zeros_like(ds) + np.nan
-    uv[~no_wind, 0] = -ds[~no_wind, 1] * np.sin(np.deg2rad(ds[~no_wind, 0]))
-    uv[~no_wind, 1] = -ds[~no_wind, 1] * np.cos(np.deg2rad(ds[~no_wind, 0]))
-    uv[no_wind, :] = 0
-    return uv
-
-
-def uv_to_ds(uv: np.ndarray) -> np.ndarray:
-    ds = np.zeros_like(uv) + np.nan
-    ds[:, :, :, 1] = np.sqrt(uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2)
-    ds[:, :, :, 0] = 180 + np.arctan2(uv[:, :, :, 0], uv[:, :, :, 1]) * 180 / np.pi
-    return ds
-
-
-def format_time(second: float, is_abbreviation: bool = False) -> str:
-    r"""Format time.
-
-    :param second: A float number representing the number of seconds.
-    :param is_abbreviation: A boolean variable representing whether processing to abbreviation.
-        The default value is False.
-    :return: A sequence of strings representing the time. For example: '43.5 seconds'
-    :raise ValueError: The value of input parameter 'second' is wrong.
+def _interp(forecast_data: np.ndarray) -> np.ndarray:
     """
-    if second < 0:
-        raise ValueError('The input parameter "second" cannot be negative.')
-    elif is_abbreviation:
-        if second <= 60:
-            time_str = str(second) + 's'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'm'
-        else:
-            time_str = str(second / 3600) + 'h'
-    else:
-        if second <= 1:
-            time_str = str(second) + ' second'
-        elif second <= 60:
-            time_str = str(second) + ' seconds'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'minutes'
-        else:
-            time_str = str(second / 3600) + 'hours'
+    Interpolate 3-hourly forecast data to hourly data.
 
-    return time_str
+    Args:
+        forecast_data: Input forecast data with shape
+            (samples, lead_times, stations, elements).
+
+    Returns:
+        np.ndarray: Interpolated forecast data with one fewer lead time.
+    """
+    for i in range(8):
+        forecast_data[:, 3 * i + 1, :, :] = (
+            forecast_data[:, 3 * i, :, :] * 2 / 3
+            + forecast_data[:, 3 * i + 3, :, :] / 3
+        )
+        forecast_data[:, 3 * i + 2, :, :] = (
+            forecast_data[:, 3 * i, :, :] / 3
+            + forecast_data[:, 3 * i + 3, :, :] * 2 / 3
+        )
+    return forecast_data[:, 1:, :, :]
 
 
-def main(input_path: str):
-    data = list()
-    label = list()
-    for i in range(2017, 2023):
-        data.append(np.load(os.path.join(input_path, 'nwp{:d}.npy'.format(i))))
-        label.append(np.load(os.path.join(input_path, 'ob{:d}.npy'.format(i))))
-        print(i)
-    data = np.vstack(data)
-    data = data[:, 12:37, :, :]
-    data = interp(data)
-    label = np.vstack(label)
-    label = label[:, 12:37, :, 2:4]
-    label = clean(label)
-    uv = ds_to_uv(label)
+def _clean(obs_data: np.ndarray) -> np.ndarray:
+    """
+    Clean observation data by removing invalid wind records.
 
-    index = ~np.isnan(uv[:, :, :, 0])
-    for i in range(data.shape[-1]):
-        index &= ~np.isnan(data[:, :, :, i])
-    x = data[index, :]
-    y = uv[:, :, :, 0][index]
-    data_mean = np.mean(x, axis=0)
-    data_std = np.std(x, axis=0)
-    x = (x - data_mean) / data_std
-    model = lgb.LGBMRegressor(n_jobs=20, verbose=0, force_col_wise=True, random_state=RANDOM_SEED)
+    Args:
+        obs_data: Raw observation data with shape
+            (samples, lead_times, stations, elements).
 
-    parameters = {
-        # 'learning_rate': (0.05, 0.1),
-        # 'n_estimators': (100, 500, 1000),
-        # 'min_child_samples': (20, 30),
-        # 'min_child_weight': (0.001, 1),
+    Returns:
+        np.ndarray: Cleaned observation data with invalid values set to NaN.
+    """
+    no_wind = (obs_data[:, 1:, :, 0] == 999017) & (obs_data[:, 1:, :, 1] == 0)
+    dir_valid = obs_data[:, 1:, :, 0] <= 360
+    spd_valid = obs_data[:, 1:, :, 1] < 999017
+    speed_diff = obs_data[:, 1:, :, 1] - obs_data[:, :-1, :, 1]
+    spd_valid &= np.abs(speed_diff) < 10
+    dir_valid |= no_wind
+    valid_mask = dir_valid & spd_valid
+    obs_data = obs_data[:, 1:, :, :]
+    obs_data[~valid_mask, :] = np.nan
+    return obs_data
+
+
+def _ds_to_uv(wind_ds: np.ndarray) -> np.ndarray:
+    """
+    Convert wind direction and speed to U/V wind components.
+
+    Args:
+        wind_ds: Wind direction and speed data with shape
+            (samples, lead_times, stations, 2).
+
+    Returns:
+        np.ndarray: U/V wind components with the same shape as input.
+    """
+    no_wind = wind_ds[:, :, :, 0] == 999017
+    wind_uv = np.zeros_like(wind_ds) + np.nan
+    wind_uv[~no_wind, 0] = (
+        -wind_ds[~no_wind, 1]
+        * np.sin(np.deg2rad(wind_ds[~no_wind, 0]))
+    )
+    wind_uv[~no_wind, 1] = (
+        -wind_ds[~no_wind, 1]
+        * np.cos(np.deg2rad(wind_ds[~no_wind, 0]))
+    )
+    wind_uv[no_wind, :] = 0
+    return wind_uv
+
+
+def _uv_to_ds(wind_uv: np.ndarray) -> np.ndarray:
+    """
+    Convert U/V wind components to wind direction and speed.
+
+    Args:
+        wind_uv: U/V wind components with shape
+            (samples, lead_times, stations, 2).
+
+    Returns:
+        np.ndarray: Wind direction and speed with the same shape as input.
+    """
+    wind_ds = np.zeros_like(wind_uv) + np.nan
+    wind_ds[:, :, :, 1] = np.sqrt(
+        wind_uv[:, :, :, 0] ** 2 + wind_uv[:, :, :, 1] ** 2
+    )
+    wind_ds[:, :, :, 0] = (
+        180
+        + np.arctan2(wind_uv[:, :, :, 0], wind_uv[:, :, :, 1]) * 180 / np.pi
+    )
+    return wind_ds
+
+
+def main(input_path: str, years: List[int]) -> None:
+    """
+    Run LightGBM hyperparameter search with randomized CV.
+
+    Args:
+        input_path: Directory containing the .npy forecast
+            and observation files.
+        years: List of years to load for training.
+
+    Returns:
+        None
+    """
+    # 1. Load forecast and observation data for each year.
+    input_dir = pathlib.Path(input_path)
+    nwp_data = list()
+    obs_data = list()
+    for year in years:
+        nwp_data.append(np.load(input_dir / 'nwp{:d}.npy'.format(year)))
+        obs_data.append(np.load(input_dir / 'ob{:d}.npy'.format(year)))
+        print(year)
+
+    # 2. Stack and preprocess the data.
+    nwp_data = np.vstack(nwp_data)
+    nwp_data = nwp_data[:, 12:37, :, :]
+    nwp_data = _interp(nwp_data)
+    obs_data = np.vstack(obs_data)
+    obs_data = obs_data[:, 12:37, :, 2:4]
+    obs_data = _clean(obs_data)
+    wind_uv = _ds_to_uv(obs_data)
+
+    # 3. Build valid mask and feature/target arrays.
+    valid_mask = ~np.isnan(wind_uv[:, :, :, 0])
+    for i in range(nwp_data.shape[-1]):
+        valid_mask &= ~np.isnan(nwp_data[:, :, :, i])
+    features = nwp_data[valid_mask, :]
+    target = wind_uv[:, :, :, 0][valid_mask]
+    feat_mean = np.mean(features, axis=0)
+    feat_std = np.std(features, axis=0)
+    features = (features - feat_mean) / feat_std
+
+    # 4. Train LightGBM with randomized cross-validation search.
+    regressor = lgb.LGBMRegressor(
+        n_jobs=20,
+        verbose=0,
+        force_col_wise=True,
+        random_state=RANDOM_SEED,
+    )
+    param_grid = {
         'max_depth': (3, 4, 5),
         'num_leaves': (7, 15, 31),
         'subsample': (0.8, 0.9, 1.0),
         'colsample_bytree': (0.8, 0.9, 1.0),
         'reg_alpha': (1, 10, 1000),
-        'reg_lambda': (1, 10, 1000)
+        'reg_lambda': (1, 10, 1000),
     }
-    clf = ms.RandomizedSearchCV(model, parameters, verbose=2)
-    clf.fit(x, y)
-    print(clf)
+    rand_search = ms.RandomizedSearchCV(regressor, param_grid, verbose=2)
+    rand_search.fit(features, target)
+    print(rand_search)
 
 
 if __name__ == '__main__':
-    print('The program "LightGBM_CV.py" is beginning.')
-    start = arrow.now()
+    print('Program LightGBM_CV.py started')
+    total_start = arrow.now()
 
+    cfg = utils.load_config()
     if len(sys.argv) == 1:
-        main(r'D:\data\wind')
-    elif len(sys.argv) == 5:
-        main(sys.argv[1])
+        main(cfg['paths']['wind_data'], cfg['constants']['years'])
+    elif len(sys.argv) == 2:
+        main(sys.argv[1], cfg['constants']['years'])
 
-    end = arrow.now()
-    running_time = (end - start).total_seconds()
+    total_elapsed = (arrow.now() - total_start).total_seconds()
+    print(
+        'Program LightGBM_CV.py finished, total time '
+        '{:s}'.format(utils.format_time(total_elapsed))
+    )
 
-    print('The program "LightGBM_CV.py" runs out in {:s}.'.format(format_time(running_time)))

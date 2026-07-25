@@ -2,16 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-ECMWF-IFS 数据提取模块
+ECMWF-IFS data extraction module
 
-从 EC4AI 二进制文件中提取气象要素到指定站点,
-输出CSV格式数据。
+Extract meteorological elements from EC4AI binary files to specified stations
+and output CSV format data.
 
 Founded in 2023-07-15
-Modified in 2026-04-03
+Modified in 2026-07-21
 @author: yinlb
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -20,86 +21,93 @@ import numpy as np
 import pandas as pd
 from meteva import base as meb
 
-from ..src.utils import format_time
+from src import utils
 
 
-# 提取的EC要素列表（30个）
-# 地面要素：2T, MSL, 2D, 10U, 10V
-# 各层要素（1000/950/925/900/850 hPa）：T, GH, R, U, V
+# EC element list to extract (30 in total)
+# Surface elements: 2T, MSL, 2D, 10U, 10V
+# Level elements (1000/950/925/900/850 hPa): T, GH, R, U, V
 ELEMENTS = (
-    # 地面要素
+    # Surface elements
     '2T', 'MSL', '2D', '10U', '10V',
-    # 1000hPa
+    # 1000 hPa
     'T_1000', 'GH_1000', 'R_1000', 'U_1000', 'V_1000',
-    # 950hPa
+    # 950 hPa
     'T_950', 'GH_950', 'R_950', 'U_950', 'V_950',
-    # 925hPa
+    # 925 hPa
     'T_925', 'GH_925', 'R_925', 'U_925', 'V_925',
-    # 900hPa
+    # 900 hPa
     'T_900', 'GH_900', 'R_900', 'U_900', 'V_900',
-    # 850hPa
+    # 850 hPa
     'T_850', 'GH_850', 'R_850', 'U_850', 'V_850'
 )
+
+# Surface elements use the high-resolution 0.125-degree grid.
+N_SURFACE_ELEMENTS = 5
 
 
 def main(
     input_path: str,
     output_path: str,
-    station_info_path: str
+    station_info_path: str,
 ) -> None:
     """
-    主函数: 从 EC4AI 提取数据到站点
-    
-    遍历指定时间范围的 EC 预报数据,
-    提取30个要素到97个站点, 输出CSV文件。
-    
-    参数:
-        input_path: EC4AI 二进制文件根目录
-        output_path: 输出CSV文件目录
-        station_info_path: 站点信息CSV文件路径
-            (包含台站号、经度、纬度)
-    
-    输出:
-        按时间命名的CSV文件, 格式为 YYYYMMDDHH.{lead_time}.csv
+    Extract data from EC4AI to stations.
+
+    Iterate over the specified time range of EC forecast data,
+    extract 30 elements to 97 stations, and output CSV files.
+
+    Args:
+        input_path: Root directory of EC4AI binary files.
+        output_path: Output CSV file directory.
+        station_info_path: Station information CSV file path
+            (contains station ID, longitude, and latitude columns).
+
+    Returns:
+        None
     """
-    # 读取站点信息
+    # ---- 1. Read station information and define grids ----
     station_df = pd.read_csv(
         station_info_path,
         encoding='gb2312',
-        low_memory=False
+        low_memory=False,
     )
     station_metadata = meb.sta_data(
         station_df.loc[:, ('台站号', '经度', '纬度')],
-        columns=('id', 'lon', 'lat')
+        columns=('id', 'lon', 'lat'),
     )
-    # 定义EC数据网格（0.125°高分辨率和0.25°标准分辨率）
+    # High-resolution grid (0.125 deg) for surface elements and standard
+    # grid (0.25 deg) for level elements.
     grid_high_res = meb.grid((70, 140, 0.125), (0, 60, 0.125))
     grid_standard_res = meb.grid((70, 140, 0.25), (0, 60, 0.25))
-    # 定义输入输出路径
+
     input_dir = Path(input_path)
     output_dir = Path(output_path)
-    # 遍历时间范围，读取数据并输出CSV
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ---- 2. Iterate over forecast initial times and extract data ----
     time_begin = arrow.get('2017')
     time_end = arrow.get('2023')
-    forecast_reference_time = time_begin
-    while forecast_reference_time < time_end:
-        year_month = forecast_reference_time.format('YYYYMM')
+    forecast_ref_time = time_begin
+    while forecast_ref_time < time_end:
+        year_month = forecast_ref_time.format('YYYYMM')
         for lead_time in range(12, 37, 3):
-            init_time = forecast_reference_time.format('MMDDHH')
-            valid_time = forecast_reference_time.shift(
+            init_time = forecast_ref_time.format('MMDDHH')
+            valid_time = forecast_ref_time.shift(
                 hours=lead_time
             ).format('MMDDHH')
             ec_filename_base = 'C1D{:s}00{:s}001'.format(init_time, valid_time)
             station_combined = None
             for elem_idx, element in enumerate(ELEMENTS):
                 filename = '{:s}_{:s}.AI.bin'.format(ec_filename_base, element)
-                file_path = input_dir / year_month / ec_filename_base / filename
+                file_path = (
+                    input_dir / year_month / ec_filename_base / filename
+                )
                 if not file_path.exists():
                     station_combined = None
                     break
                 raw_data = np.fromfile(str(file_path), dtype=np.float32)
-                # 前5个要素使用0.125°高分辨率网格
-                if elem_idx < 5:
+                if elem_idx < N_SURFACE_ELEMENTS:
                     grid_data = meb.grid_data(grid_high_res, raw_data)
                 else:
                     grid_data = meb.grid_data(grid_standard_res, raw_data)
@@ -110,41 +118,43 @@ def main(
                 meb.set_stadata_coords(
                     station_single,
                     level=0,
-                    time=forecast_reference_time.datetime,
-                    dtime=lead_time
+                    time=forecast_ref_time.datetime,
+                    dtime=lead_time,
                 )
                 station_combined = meb.combine_on_id(
                     station_combined, station_single
                 )
             if station_combined is not None:
                 output_filename = '{:s}.{:03d}.csv'.format(
-                    forecast_reference_time.format('YYYYMMDDHH'), lead_time
+                    forecast_ref_time.format('YYYYMMDDHH'), lead_time
                 )
                 station_combined.to_csv(
                     output_dir / output_filename, index=False
                 )
-        forecast_reference_time = forecast_reference_time.shift(hours=12)
+        forecast_ref_time = forecast_ref_time.shift(hours=12)
 
 
 if __name__ == '__main__':
-    msg = 'The program "extract_ec.py" is beginning.'
-    print(msg)
-    start = arrow.now()
+    print('Program extract_ec.py started')
+    total_start = arrow.now()
 
     if len(sys.argv) == 1:
+        cfg = utils.load_config()
+        paths = cfg['paths']
         main(
-            input_path=r'\\10.110.173.91\sqxt\EC4AI',
-            output_path=r'D:\data\ec_station\wind97',
-            station_info_path=r'D:\Project\wind\国家气象观测站.csv'
+            input_path=paths['ec4ai'],
+            output_path=paths['ec_station'],
+            station_info_path=paths['station_csv'],
         )
     elif len(sys.argv) == 4:
         main(
             input_path=sys.argv[1],
             output_path=sys.argv[2],
-            station_info_path=sys.argv[3]
+            station_info_path=sys.argv[3],
         )
 
-    end = arrow.now()
-    running_time = (end - start).total_seconds()
-    time_str = format_time(running_time)
-    print('The program "extract_ec.py" runs out in {:s}.'.format(time_str))
+    total_elapsed = (arrow.now() - total_start).total_seconds()
+    print(
+        'Program extract_ec.py finished, total time '
+        f'{utils.format_time(total_elapsed)}'
+    )

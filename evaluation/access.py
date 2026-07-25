@@ -1,13 +1,17 @@
 #!user/bin.python3
+# -*- coding: utf-8 -*-
 
 """
 Founded in 2023-07-19
-Modified in 2023-08-06
+Modified in 2026-07-22
 @author: yinlb
 """
+
 import datetime
 import os
 import sys
+import typing
+from pathlib import Path
 
 import arrow
 import numpy as np
@@ -17,516 +21,549 @@ from meteva import base as meb
 from meteva import method as mem
 from scipy import stats
 
+from src import utils
 
-def draw_scatter(x: np.ndarray, y: np.ndarray, save_path: str) -> None:
-    # Calculate the point density
-    xy = np.vstack([x, y])
-    z = stats.gaussian_kde(xy)(xy)
 
-    # Sort the points by density, so that the densest points are plotted last
-    idx = z.argsort()
-    x, y, z = x[idx], y[idx], z[idx]
-    print(np.sum(idx))
+METRIC_COLUMNS = (
+    'R_EC', 'ME_EC', 'MAE_EC', 'RMSE_EC', 'MRE_EC',
+    'R_LightGBM', 'ME_LightGBM', 'MAE_LightGBM',
+    'RMSE_LightGBM', 'MRE_LightGBM',
+)
 
-    fig, ax = plt.subplots()
-    plt.scatter(x, y, c=z, s=20, cmap='Spectral')
+
+def _draw_scatter(
+    obs_data: np.ndarray,
+    fcst_data: np.ndarray,
+    save_path: str,
+) -> None:
+    """
+    Draw a density scatter plot of observations versus forecasts.
+
+    Args:
+        obs_data: Observation values.
+        fcst_data: Forecast values.
+        save_path: File path where the figure will be saved.
+
+    Returns:
+        None
+    """
+    # Calculate the point density.
+    stacked_data = np.vstack([obs_data, fcst_data])
+    density = stats.gaussian_kde(stacked_data)(stacked_data)
+
+    # Sort points by density so densest points are plotted last.
+    sort_index = density.argsort()
+    obs_data = obs_data[sort_index]
+    fcst_data = fcst_data[sort_index]
+    density = density[sort_index]
+    print(np.sum(sort_index))
+
+    figure, axes = plt.subplots()
+    plt.scatter(obs_data, fcst_data, c=density, s=20, cmap='Spectral')
     plt.colorbar()
     plt.savefig(save_path, dpi=300)
     plt.cla()
 
 
-def format_time(second: float, is_abbreviation: bool = False) -> str:
-    r"""Format time.
-
-    :param second: A float number representing the number of seconds.
-    :param is_abbreviation: A boolean variable representing whether processing to abbreviation.
-        The default value is False.
-    :return: A sequence of strings representing the time. For example: '43.5 seconds'
-    :raise ValueError: The value of input parameter 'second' is wrong.
+def _load_forecasts(
+    input_path: str,
+    years: typing.List[int],
+) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    if second < 0:
-        raise ValueError('The input parameter "second" cannot be negative.')
-    elif is_abbreviation:
-        if second <= 60:
-            time_str = str(second) + 's'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'm'
+    Load observation, LightGBM, and NWP forecast arrays for all years.
+
+    Args:
+        input_path: Directory containing ob_<year>.npy, lgb_<year>.npy,
+            and nwp_<year>.npy files.
+        years: Years to load.
+
+    Returns:
+        Tuple of (observation, LightGBM forecast, NWP forecast) arrays.
+    """
+    obs_list = list()
+    lgb_list = list()
+    nwp_list = list()
+    for year in years:
+        year_data = np.load(str(Path(input_path) / f'ob_{year:d}.npy'))
+        if len(year_data.shape) == 4:
+            year_data = year_data[:, :, :, 1]
+        obs_list.append(year_data)
+
+        year_data = np.load(str(Path(input_path) / f'lgb_{year:d}.npy'))
+        if len(year_data.shape) == 4:
+            year_data = year_data[:, :, :, 1]
+        lgb_list.append(year_data)
+
+        year_data = np.load(str(Path(input_path) / f'nwp_{year:d}.npy'))
+        if len(year_data.shape) == 4:
+            year_data = year_data[:, :, :, 1]
+        nwp_list.append(year_data)
+    return np.vstack(obs_list), np.vstack(lgb_list), np.vstack(nwp_list)
+
+
+def _build_eval_dataframe(
+    obs_all: np.ndarray,
+    lgb_all: np.ndarray,
+    nwp_all: np.ndarray,
+    station_data: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Build a unified evaluation DataFrame from loaded arrays.
+
+    Args:
+        obs_all: Observation array.
+        lgb_all: LightGBM forecast array.
+        nwp_all: NWP forecast array.
+        station_data: Station metadata DataFrame.
+
+    Returns:
+        Evaluation DataFrame with valid samples only.
+    """
+    # 4382 is the number of forecast cycles for the configured years.
+    time_array = np.zeros_like(obs_all, dtype='datetime64[ns]')
+    for cycle_idx in range(4382):
+        time_array[cycle_idx, :, :] = (
+            arrow.get('2017').shift(hours=12 * cycle_idx).datetime
+        )
+    lead_time_array = np.zeros_like(obs_all, dtype=np.int_)
+    for lead_idx in range(25):
+        lead_time_array[:, lead_idx, :] = 12 + lead_idx
+    station_id_array = np.zeros_like(obs_all, dtype=np.int_)
+    elev_array = np.zeros_like(obs_all, dtype=np.float_)
+    for station_idx in range(97):
+        station_id_array[:, :, station_idx] = station_data.loc[
+            station_idx, 'id'
+        ]
+        elev_array[:, :, station_idx] = station_data.loc[station_idx, 'e']
+    eval_data = meb.sta_data(
+        df=pd.DataFrame(
+            data={
+                'time': np.reshape(time_array, -1),
+                'dtime': np.reshape(lead_time_array, -1),
+                'id': np.reshape(station_id_array, -1),
+                'ob': np.reshape(obs_all, -1),
+                'NWP': np.reshape(nwp_all, -1),
+                'LightGBM': np.reshape(lgb_all, -1),
+            },
+        ),
+        columns=['time', 'dtime', 'id', 'ob', 'NWP', 'LightGBM'],
+    )
+    for station_idx in range(97):
+        eval_data.loc[
+            eval_data.loc[:, 'id'] == station_data.loc[station_idx, 'id'],
+            'lon',
+        ] = station_data.loc[station_idx, 'lon']
+        eval_data.loc[
+            eval_data.loc[:, 'id'] == station_data.loc[station_idx, 'id'],
+            'lat',
+        ] = station_data.loc[station_idx, 'lat']
+    meb.set_stadata_coords(eval_data, level=0)
+    valid_mask = (
+        ~np.isnan(eval_data.loc[:, 'ob'])
+        & ~np.isnan(eval_data.loc[:, 'NWP'])
+        & ~np.isnan(eval_data.loc[:, 'LightGBM'])
+    )
+    eval_data = eval_data.loc[valid_mask]
+    eval_data.reset_index(drop=True, inplace=True)
+    print(len(eval_data))
+    print(eval_data.max())
+    return eval_data
+
+
+def _append_metric_row(
+    metrics_dict: typing.Dict[str, typing.List],
+    group_key: str,
+    label: str,
+    subset_data: pd.DataFrame,
+) -> None:
+    """
+    Compute verification metrics for a subset and append to the dict.
+
+    Args:
+        metrics_dict: Dictionary collecting metric columns.
+        group_key: Name of the grouping column.
+        label: Group label.
+        subset_data: Subset evaluation DataFrame.
+    """
+    obs_array = np.array(subset_data.loc[:, 'ob']).T
+    fcst_array = np.array(
+        subset_data.loc[:, ('NWP', 'LightGBM')]
+    ).T
+    corr = mem.corr(obs_array, fcst_array)
+    mean_err = mem.me(obs_array, fcst_array)
+    abs_err = mem.mae(obs_array, fcst_array)
+    rmse_val = mem.rmse(obs_array, fcst_array)
+    rel_err = mem.mre(obs_array, fcst_array)
+    metrics_dict[group_key].append(label)
+    metrics_dict['R_EC'].append(corr[0])
+    metrics_dict['ME_EC'].append(mean_err[0])
+    metrics_dict['MAE_EC'].append(abs_err[0])
+    metrics_dict['RMSE_EC'].append(rmse_val[0])
+    metrics_dict['MRE_EC'].append(rel_err[0])
+    metrics_dict['R_LightGBM'].append(corr[1])
+    metrics_dict['ME_LightGBM'].append(mean_err[1])
+    metrics_dict['MAE_LightGBM'].append(abs_err[1])
+    metrics_dict['RMSE_LightGBM'].append(rmse_val[1])
+    metrics_dict['MRE_LightGBM'].append(rel_err[1])
+
+
+def _make_metrics_dict(
+    group_key: str,
+) -> typing.Dict[str, typing.List]:
+    """Return an empty metrics dictionary for the given group key."""
+    metrics_dict = {
+        group_key: list(),
+        'R_EC': list(),
+        'ME_EC': list(),
+        'MAE_EC': list(),
+        'RMSE_EC': list(),
+        'MRE_EC': list(),
+        'R_LightGBM': list(),
+        'ME_LightGBM': list(),
+        'MAE_LightGBM': list(),
+        'RMSE_LightGBM': list(),
+        'MRE_LightGBM': list(),
+    }
+    return metrics_dict
+
+
+def _plot_metric_bars(
+    metrics_df: pd.DataFrame,
+    group_key: str,
+    output_path: str,
+    prefix: str,
+    x_start: float,
+    n_groups: int,
+    x_tick_start: int,
+) -> None:
+    """
+    Draw grouped bar charts for each metric and save to files.
+
+    Args:
+        metrics_df: DataFrame with metric columns.
+        group_key: Name of the grouping column.
+        output_path: Directory to save figures.
+        prefix: Filename prefix.
+        x_start: Left edge of the first bar group.
+        n_groups: Number of groups.
+        x_tick_start: Start value for x-axis ticks.
+    """
+    for metric in ('R', 'ME', 'MAE', 'RMSE', 'MRE'):
+        ec_col = f'{metric}_EC'
+        lgb_col = f'{metric}_LightGBM'
+        plt.bar(
+            np.arange(x_start, x_start + n_groups, 1),
+            metrics_df.loc[:, ec_col],
+            width=0.4,
+            color='blue',
+            label='EC',
+        )
+        plt.bar(
+            np.arange(x_start + 0.4, x_start + n_groups + 0.4, 1),
+            metrics_df.loc[:, lgb_col],
+            width=0.4,
+            color='red',
+            label='LightGBM',
+        )
+        plt.xticks(
+            range(x_tick_start, x_tick_start + n_groups),
+            metrics_df.loc[:, group_key],
+        )
+        plt.title(metric)
+        plt.legend()
+        plt.savefig(
+            str(Path(output_path) / f'{prefix}_{metric.lower()}.png'),
+            dpi=300,
+        )
+        plt.cla()
+
+
+def _evaluate_by_lead_time(
+    eval_data: pd.DataFrame,
+    output_path: str,
+) -> None:
+    """
+    Compute and plot verification metrics by forecast lead time.
+
+    Args:
+        eval_data: Evaluation DataFrame.
+        output_path: Directory to save outputs.
+    """
+    group_key = '时次'
+    metrics_dict = _make_metrics_dict(group_key)
+    _append_metric_row(metrics_dict, group_key, 'All', eval_data)
+    for lead_idx in range(25):
+        subset_data = meb.sele_by_para(eval_data, dtime=12 + lead_idx)
+        _append_metric_row(
+            metrics_dict, group_key, str(12 + lead_idx), subset_data,
+        )
+    lead_time_df = pd.DataFrame(
+        data=metrics_dict,
+        columns=[group_key, *METRIC_COLUMNS],
+    )
+    _plot_metric_bars(
+        lead_time_df,
+        group_key,
+        output_path,
+        prefix='分时次',
+        x_start=10.8,
+        n_groups=26,
+        x_tick_start=11,
+    )
+    lead_time_df.to_csv(
+        str(Path(output_path) / '分时次.csv'),
+        encoding='gb2312',
+        index=False,
+    )
+
+
+def _evaluate_by_month(
+    eval_data: pd.DataFrame,
+    output_path: str,
+) -> None:
+    """
+    Compute and plot verification metrics by month.
+
+    Args:
+        eval_data: Evaluation DataFrame.
+        output_path: Directory to save outputs.
+    """
+    group_key = '月份'
+    metrics_dict = _make_metrics_dict(group_key)
+    _append_metric_row(metrics_dict, group_key, 'All', eval_data)
+    for month_idx in range(12):
+        subset_data = meb.sele_by_para(eval_data, month=month_idx + 1)
+        _append_metric_row(
+            metrics_dict, group_key, str(month_idx + 1), subset_data,
+        )
+    monthly_df = pd.DataFrame(
+        data=metrics_dict,
+        columns=[group_key, *METRIC_COLUMNS],
+    )
+    _plot_metric_bars(
+        monthly_df,
+        group_key,
+        output_path,
+        prefix='分月份',
+        x_start=-0.2,
+        n_groups=13,
+        x_tick_start=0,
+    )
+    monthly_df.to_csv(
+        str(Path(output_path) / '分月份.csv'),
+        encoding='gb2312',
+        index=False,
+    )
+
+
+def _evaluate_by_grade(
+    eval_data: pd.DataFrame,
+    output_path: str,
+) -> None:
+    """
+    Compute and plot verification metrics by observed wind speed grade.
+
+    Args:
+        eval_data: Evaluation DataFrame.
+        output_path: Directory to save outputs.
+    """
+    group_key = '量级'
+    metrics_dict = _make_metrics_dict(group_key)
+    grade_masks = [
+        (0.3, 1.6, '1级'),
+        (1.6, 3.4, '2级'),
+        (3.4, 5.5, '3级'),
+        (5.5, 8.0, '4级'),
+        (8.0, np.inf, '>=5级'),
+    ]
+    _append_metric_row(metrics_dict, group_key, 'All', eval_data)
+    for lower, upper, label in grade_masks:
+        if np.isinf(upper):
+            valid_mask = eval_data.loc[:, 'ob'] >= lower
         else:
-            time_str = str(second / 3600) + 'h'
-    else:
-        if second <= 1:
-            time_str = str(second) + ' second'
-        elif second <= 60:
-            time_str = str(second) + ' seconds'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'minutes'
-        else:
-            time_str = str(second / 3600) + 'hours'
+            valid_mask = (
+                (eval_data.loc[:, 'ob'] >= lower)
+                & (eval_data.loc[:, 'ob'] < upper)
+            )
+        subset_data = eval_data.loc[valid_mask]
+        _append_metric_row(metrics_dict, group_key, label, subset_data)
+    grade_df = pd.DataFrame(
+        data=metrics_dict,
+        columns=[group_key, *METRIC_COLUMNS],
+    )
+    _plot_metric_bars(
+        grade_df,
+        group_key,
+        output_path,
+        prefix='分量级',
+        x_start=-0.2,
+        n_groups=6,
+        x_tick_start=0,
+    )
+    grade_df.to_csv(
+        str(Path(output_path) / '分量级.csv'),
+        encoding='gb2312',
+        index=False,
+    )
 
-    return time_str
+
+def _evaluate_by_station(
+    eval_data: pd.DataFrame,
+    station_data: pd.DataFrame,
+    output_path: str,
+) -> None:
+    """
+    Compute station-level metrics and draw spatial distribution maps.
+
+    Args:
+        eval_data: Evaluation DataFrame.
+        station_data: Station metadata DataFrame.
+        output_path: Directory to save outputs.
+    """
+    station_scores_df = station_data.copy()
+    for col in METRIC_COLUMNS:
+        station_scores_df.loc[:, col] = 0.0
+    for station_idx in range(97):
+        subset_data = meb.sele_by_para(
+            eval_data, id=station_data.loc[station_idx, 'id']
+        )
+        obs_array = np.array(subset_data.loc[:, 'ob']).T
+        fcst_array = np.array(
+            subset_data.loc[:, ('NWP', 'LightGBM')]
+        ).T
+        corr = mem.corr(obs_array, fcst_array)
+        mean_err = mem.me(obs_array, fcst_array)
+        abs_err = mem.mae(obs_array, fcst_array)
+        rmse_val = mem.rmse(obs_array, fcst_array)
+        rel_err = mem.mre(obs_array, fcst_array)
+        station_scores_df.loc[station_idx, 'R_EC'] = corr[0]
+        station_scores_df.loc[station_idx, 'ME_EC'] = mean_err[0]
+        station_scores_df.loc[station_idx, 'MAE_EC'] = abs_err[0]
+        station_scores_df.loc[station_idx, 'RMSE_EC'] = rmse_val[0]
+        station_scores_df.loc[station_idx, 'MRE_EC'] = rel_err[0]
+        station_scores_df.loc[station_idx, 'R_LightGBM'] = corr[1]
+        station_scores_df.loc[station_idx, 'ME_LightGBM'] = mean_err[1]
+        station_scores_df.loc[station_idx, 'MAE_LightGBM'] = abs_err[1]
+        station_scores_df.loc[station_idx, 'RMSE_LightGBM'] = rmse_val[1]
+        station_scores_df.loc[station_idx, 'MRE_LightGBM'] = rel_err[1]
+    meb.set_stadata_coords(
+        station_scores_df,
+        level=0,
+        time=datetime.datetime(2023, 1, 1),
+        dtime=0,
+    )
+    plot_configs = [
+        ('R_EC', meb.cmaps.ts, 'R_EC.png'),
+        ('ME_EC', meb.cmaps.me, 'ME_EC.png'),
+        ('MAE_EC', meb.cmaps.mae, 'MAE_EC.png'),
+        ('RMSE_EC', meb.cmaps.mae, 'RMSE_EC.png'),
+        ('MRE_EC', meb.cmaps.ts, 'MRE_EC.png'),
+        ('R_LightGBM', meb.cmaps.ts, 'R_LightGBM.png'),
+        ('ME_LightGBM', meb.cmaps.me, 'ME_LightGBM.png'),
+        ('MAE_LightGBM', meb.cmaps.mae, 'MAE_LightGBM.png'),
+        ('RMSE_LightGBM', meb.cmaps.mae, 'RMSE_LightGBM.png'),
+        ('MRE_LightGBM', meb.cmaps.ts, 'MRE_LightGBM.png'),
+    ]
+    for value_col, cmap, filename in plot_configs:
+        meb.tool.plot_tools.scatter_sta(
+            station_scores_df.loc[
+                :,
+                ('level', 'time', 'dtime', 'id', 'lon', 'lat', value_col),
+            ],
+            value_column=0,
+            map_extend=[108.65, 114.4, 24.5, 30.25],
+            cmap=cmap,
+            save_path=str(Path(output_path) / filename),
+            dpi=300,
+        )
+    station_scores_df.to_csv(
+        str(Path(output_path) / '分站点.csv'),
+        encoding='gb2312',
+        index=False,
+    )
 
 
-def main(input_path: str, output_path: str, station_information_path: str):
-    station_information = pd.read_csv(station_information_path, encoding='gb2312', low_memory=False)
-    station = meb.sta_data(station_information.loc[:, ('台站号', '经度', '纬度', '海拔')],
-                           columns=('id', 'lon', 'lat', 'e'))
-    station.sort_values(by=['id'], inplace=True)
-    station.reset_index(drop=True, inplace=True)
+def main(
+    input_path: str,
+    output_path: str,
+    station_info_path: str,
+) -> None:
+    """
+    Evaluate LightGBM and NWP wind forecasts against observations.
 
-    ob_label = list()
-    lgb_label = list()
-    nwp_label = list()
-    for year in range(2017, 2023):
-        temp_data = np.load(os.path.join(input_path, 'ob_{:d}.npy'.format(year)))
-        if len(temp_data.shape) == 4:
-            temp_data = temp_data[:, :, :, 1]
-        ob_label.append(temp_data)
-        temp_data = np.load(os.path.join(input_path, 'lgb_{:d}.npy'.format(year)))
-        if len(temp_data.shape) == 4:
-            temp_data = temp_data[:, :, :, 1]
-        lgb_label.append(temp_data)
-        temp_data = np.load(os.path.join(input_path, 'nwp_{:d}.npy'.format(year)))
-        if len(temp_data.shape) == 4:
-            temp_data = temp_data[:, :, :, 1]
-        nwp_label.append(temp_data)
-    ob_label = np.vstack(ob_label)
-    lgb_label = np.vstack(lgb_label)
-    nwp_label = np.vstack(nwp_label)
-    data_time = np.zeros_like(ob_label, dtype='datetime64[ns]')
-    for i in range(4382):
-        data_time[i, :, :] = arrow.get('2017').shift(hours=12 * i).datetime
-    data_dtime = np.zeros_like(ob_label, dtype=np.int_)
-    for i in range(25):
-        data_dtime[:, i, :] = 12 + i
-    data_id = np.zeros_like(ob_label, dtype=np.int_)
-    data_e = np.zeros_like(ob_label, dtype=np.float_)
-    for i in range(97):
-        data_id[:, :, i] = station.loc[i, 'id']
-        data_e[:, :, i] = station.loc[i, 'e']
-    sta = meb.sta_data(df=pd.DataFrame(data={'time': np.reshape(data_time, -1), 'dtime': np.reshape(data_dtime, -1),
-                                             'id': np.reshape(data_id, -1), 'ob': np.reshape(ob_label, -1),
-                                             'NWP': np.reshape(nwp_label, -1), 'LightGBM': np.reshape(lgb_label, -1)}),
-                       columns=['time', 'dtime', 'id', 'ob', 'NWP', 'LightGBM'])
-    for i in range(97):
-        sta.loc[sta.loc[:, 'id'] == station.loc[i, 'id'], 'lon'] = station.loc[i, 'lon']
-        sta.loc[sta.loc[:, 'id'] == station.loc[i, 'id'], 'lat'] = station.loc[i, 'lat']
-    meb.set_stadata_coords(sta, level=0)
-    index = ~np.isnan(sta.loc[:, 'ob']) & ~np.isnan(sta.loc[:, 'NWP']) & ~np.isnan(sta.loc[:, 'LightGBM'])
-    sta = sta.loc[index]
-    sta.reset_index(drop=True, inplace=True)
-    print(len(sta))
-    print(sta.max())
+    Loads observation, NWP, and LightGBM forecast data for the configured
+    years, computes verification metrics by lead time, month, wind speed
+    grade, and station, and saves tables and figures.
 
-    # draw_scatter(np.array(sta.loc[:, 'ob']), np.array(sta.loc[:, 'NWP']),
-    #              save_path=os.path.join(output_path, 'EC散点密度图.png'))
-    # draw_scatter(np.array(sta.loc[:, 'ob']), np.array(sta.loc[:, 'LightGBM']),
-    #              save_path=os.path.join(output_path, 'LightGBM散点密度图.png'))
-    # mem.scatter_regress(np.array(sta.loc[:, 'ob']).T, np.array(sta.loc[:, ('NWP', 'LightGBM')]).T,
-    #                     save_path=os.path.join(output_path, '散点回归图.png'), dpi=300)
-    # mem.pdf_plot(np.array(sta.loc[:, 'ob']).T, np.array(sta.loc[:, ('NWP', 'LightGBM')]).T,
-    #              save_path=os.path.join(output_path, '频率关系图.png'), dpi=300)
-    # mem.box_plot_continue(np.array(sta.loc[:, 'ob']).T, np.array(sta.loc[:, ('NWP', 'LightGBM')]).T,
-    #                       save_path=os.path.join(output_path, '频率湘线图.png'), dpi=300)
+    Args:
+        input_path: Directory containing ob_<year>.npy, nwp_<year>.npy,
+            and lgb_<year>.npy files.
+        output_path: Directory where tables and figures will be saved.
+        station_info_path: Path to the CSV file with station metadata.
 
-    # 分时次
-    dic = {'时次': list(), 'R_EC': list(), 'ME_EC': list(), 'MAE_EC': list(), 'RMSE_EC': list(), 'MRE_EC': list(),
-           'R_LightGBM': list(), 'ME_LightGBM': list(), 'MAE_LightGBM': list(), 'RMSE_LightGBM': list(),
-           'MRE_LightGBM': list()}
-    ob = np.array(sta.loc[:, 'ob']).T
-    fo = np.array(sta.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['时次'].append('All')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    for i in range(25):
-        sta0 = meb.sele_by_para(sta, dtime=12 + i)
-        ob = np.array(sta0.loc[:, 'ob']).T
-        fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-        r = mem.corr(ob, fo)
-        me = mem.me(ob, fo)
-        mae = mem.mae(ob, fo)
-        rmse = mem.rmse(ob, fo)
-        mre = mem.mre(ob, fo)
-        dic['时次'].append(str(12 + i))
-        dic['R_EC'].append(r[0])
-        dic['ME_EC'].append(me[0])
-        dic['MAE_EC'].append(mae[0])
-        dic['RMSE_EC'].append(rmse[0])
-        dic['MRE_EC'].append(mre[0])
-        dic['R_LightGBM'].append(r[1])
-        dic['ME_LightGBM'].append(me[1])
-        dic['MAE_LightGBM'].append(mae[1])
-        dic['RMSE_LightGBM'].append(rmse[1])
-        dic['MRE_LightGBM'].append(mre[1])
-    df = pd.DataFrame(data=dic, columns=['时次', 'R_EC', 'ME_EC', 'MAE_EC', 'RMSE_EC', 'MRE_EC', 'R_LightGBM',
-                                         'ME_LightGBM', 'MAE_LightGBM', 'RMSE_LightGBM', 'MRE_LightGBM'])
-    plt.bar(np.arange(10.8, 36.7, 1), df.loc[:, 'R_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(11.2, 37.1, 1), df.loc[:, 'R_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(11, 37), df.loc[:, '时次'])
-    plt.title('R')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分时次_r.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(10.8, 36.7, 1), df.loc[:, 'ME_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(11.2, 37.1, 1), df.loc[:, 'ME_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(11, 37), df.loc[:, '时次'])
-    plt.title('ME')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分时次_me.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(10.8, 36.7, 1), df.loc[:, 'MAE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(11.2, 37.1, 1), df.loc[:, 'MAE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(11, 37), df.loc[:, '时次'])
-    plt.title('MAE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分时次_mae.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(10.8, 36.7, 1), df.loc[:, 'RMSE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(11.2, 37.1, 1), df.loc[:, 'RMSE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(11, 37), df.loc[:, '时次'])
-    plt.title('RMSE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分时次_rmse.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(10.8, 36.7, 1), df.loc[:, 'MRE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(11.2, 37.1, 1), df.loc[:, 'MRE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(11, 37), df.loc[:, '时次'])
-    plt.title('MRE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分时次_mre.png'), dpi=300)
-    plt.cla()
-    df.to_csv(os.path.join(output_path, '分时次.csv'), encoding='gb2312', index=False)
+    Returns:
+        None
+    """
+    # Ensure the output directory exists before writing results.
+    os.makedirs(output_path, exist_ok=True)
 
-    # 分月份
-    dic = {'月份': list(), 'R_EC': list(), 'ME_EC': list(), 'MAE_EC': list(), 'RMSE_EC': list(), 'MRE_EC': list(),
-           'R_LightGBM': list(), 'ME_LightGBM': list(), 'MAE_LightGBM': list(), 'RMSE_LightGBM': list(),
-           'MRE_LightGBM': list()}
-    ob = np.array(sta.loc[:, 'ob']).T
-    fo = np.array(sta.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['月份'].append('All')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    for i in range(12):
-        sta0 = meb.sele_by_para(sta, month=i + 1)
-        ob = np.array(sta0.loc[:, 'ob']).T
-        fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-        r = mem.corr(ob, fo)
-        me = mem.me(ob, fo)
-        mae = mem.mae(ob, fo)
-        rmse = mem.rmse(ob, fo)
-        mre = mem.mre(ob, fo)
-        dic['月份'].append(str(i + 1))
-        dic['R_EC'].append(r[0])
-        dic['ME_EC'].append(me[0])
-        dic['MAE_EC'].append(mae[0])
-        dic['RMSE_EC'].append(rmse[0])
-        dic['MRE_EC'].append(mre[0])
-        dic['R_LightGBM'].append(r[1])
-        dic['ME_LightGBM'].append(me[1])
-        dic['MAE_LightGBM'].append(mae[1])
-        dic['RMSE_LightGBM'].append(rmse[1])
-        dic['MRE_LightGBM'].append(mre[1])
-    df = pd.DataFrame(data=dic, columns=['月份', 'R_EC', 'ME_EC', 'MAE_EC', 'RMSE_EC', 'MRE_EC', 'R_LightGBM',
-                                         'ME_LightGBM', 'MAE_LightGBM', 'RMSE_LightGBM', 'MRE_LightGBM'])
-    plt.bar(np.arange(-0.2, 12.8, 1), df.loc[:, 'R_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 13.2, 1), df.loc[:, 'R_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(13), df.loc[:, '月份'])
-    plt.title('R')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分月份_r.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 12.8, 1), df.loc[:, 'ME_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 13.2, 1), df.loc[:, 'ME_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(13), df.loc[:, '月份'])
-    plt.title('ME')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分月份_me.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 12.8, 1), df.loc[:, 'MAE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 13.2, 1), df.loc[:, 'MAE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(13), df.loc[:, '月份'])
-    plt.title('MAE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分月份_mae.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 12.8, 1), df.loc[:, 'RMSE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 13.2, 1), df.loc[:, 'RMSE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(13), df.loc[:, '月份'])
-    plt.title('RMSE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分月份_rmse.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 12.8, 1), df.loc[:, 'MRE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 13.2, 1), df.loc[:, 'MRE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(13), df.loc[:, '月份'])
-    plt.title('MRE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分月份_mre.png'), dpi=300)
-    plt.cla()
-    df.to_csv(os.path.join(output_path, '分月份.csv'), encoding='gb2312', index=False)
+    cfg = utils.load_config()
+    years = cfg['constants']['years']
 
-    # 分量级
-    dic = {'量级': list(), 'R_EC': list(), 'ME_EC': list(), 'MAE_EC': list(), 'RMSE_EC': list(), 'MRE_EC': list(),
-           'R_LightGBM': list(), 'ME_LightGBM': list(), 'MAE_LightGBM': list(), 'RMSE_LightGBM': list(),
-           'MRE_LightGBM': list()}
-    ob = np.array(sta.loc[:, 'ob']).T
-    fo = np.array(sta.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['量级'].append('All')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    index = (sta.loc[:, 'ob'] >= 0.3) & (sta.loc[:, 'ob'] < 1.6)
-    sta0 = sta.loc[index]
-    ob = np.array(sta0.loc[:, 'ob']).T
-    fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['量级'].append('1级')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    index = (sta.loc[:, 'ob'] >= 1.6) & (sta.loc[:, 'ob'] < 3.4)
-    sta0 = sta.loc[index]
-    ob = np.array(sta0.loc[:, 'ob']).T
-    fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['量级'].append('2级')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    index = (sta.loc[:, 'ob'] >= 3.4) & (sta.loc[:, 'ob'] < 5.5)
-    sta0 = sta.loc[index]
-    ob = np.array(sta0.loc[:, 'ob']).T
-    fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['量级'].append('3级')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    index = (sta.loc[:, 'ob'] >= 5.5) & (sta.loc[:, 'ob'] < 8.0)
-    sta0 = sta.loc[index]
-    ob = np.array(sta0.loc[:, 'ob']).T
-    fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['量级'].append('4级')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    index = sta.loc[:, 'ob'] >= 8.0
-    sta0 = sta.loc[index]
-    ob = np.array(sta0.loc[:, 'ob']).T
-    fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-    r = mem.corr(ob, fo)
-    me = mem.me(ob, fo)
-    mae = mem.mae(ob, fo)
-    rmse = mem.rmse(ob, fo)
-    mre = mem.mre(ob, fo)
-    dic['量级'].append('≥5级')
-    dic['R_EC'].append(r[0])
-    dic['ME_EC'].append(me[0])
-    dic['MAE_EC'].append(mae[0])
-    dic['RMSE_EC'].append(rmse[0])
-    dic['MRE_EC'].append(mre[0])
-    dic['R_LightGBM'].append(r[1])
-    dic['ME_LightGBM'].append(me[1])
-    dic['MAE_LightGBM'].append(mae[1])
-    dic['RMSE_LightGBM'].append(rmse[1])
-    dic['MRE_LightGBM'].append(mre[1])
-    df = pd.DataFrame(data=dic, columns=['量级', 'R_EC', 'ME_EC', 'MAE_EC', 'RMSE_EC', 'MRE_EC', 'R_LightGBM',
-                                         'ME_LightGBM', 'MAE_LightGBM', 'RMSE_LightGBM', 'MRE_LightGBM'])
-    plt.bar(np.arange(-0.2, 5.8, 1), df.loc[:, 'R_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 6.2, 1), df.loc[:, 'R_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(6), df.loc[:, '量级'])
-    plt.title('R')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分量级_r.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 5.8, 1), df.loc[:, 'ME_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 6.2, 1), df.loc[:, 'ME_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(6), df.loc[:, '量级'])
-    plt.title('ME')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分量级_me.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 5.8, 1), df.loc[:, 'MAE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 6.2, 1), df.loc[:, 'MAE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(6), df.loc[:, '量级'])
-    plt.title('MAE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分量级_mae.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 5.8, 1), df.loc[:, 'RMSE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 6.2, 1), df.loc[:, 'RMSE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(6), df.loc[:, '量级'])
-    plt.title('RMSE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分量级_rmse.png'), dpi=300)
-    plt.cla()
-    plt.bar(np.arange(-0.2, 5.8, 1), df.loc[:, 'MRE_EC'], width=0.4, color='blue', label='EC')
-    plt.bar(np.arange(0.2, 6.2, 1), df.loc[:, 'MRE_LightGBM'], width=0.4, color='red', label='LightGBM')
-    plt.xticks(range(6), df.loc[:, '量级'])
-    plt.title('MRE')
-    plt.legend()
-    plt.savefig(os.path.join(output_path, '分量级_mre.png'), dpi=300)
-    plt.cla()
-    df.to_csv(os.path.join(output_path, '分量级.csv'), encoding='gb2312', index=False)
+    # 1. Load station information and build station metadata.
+    station_info = pd.read_csv(
+        str(station_info_path), encoding='gb2312', low_memory=False
+    )
+    station_data = meb.sta_data(
+        station_info.loc[:, ('台站号', '经度', '纬度', '海拔')],
+        columns=('id', 'lon', 'lat', 'e'))
+    station_data.sort_values(by=['id'], inplace=True)
+    station_data.reset_index(drop=True, inplace=True)
 
-    # 分站点
-    df = station.copy()
-    df.loc[:, 'R_EC'] = 0.0
-    df.loc[:, 'ME_EC'] = 0.0
-    df.loc[:, 'MAE_EC'] = 0.0
-    df.loc[:, 'RMSE_EC'] = 0.0
-    df.loc[:, 'MRE_EC'] = 0.0
-    df.loc[:, 'R_LightGBM'] = 0.0
-    df.loc[:, 'ME_LightGBM'] = 0.0
-    df.loc[:, 'MAE_LightGBM'] = 0.0
-    df.loc[:, 'RMSE_LightGBM'] = 0.0
-    df.loc[:, 'MRE_LightGBM'] = 0.0
-    for i in range(97):
-        sta0 = meb.sele_by_para(sta, id=station.loc[i, 'id'])
-        ob = np.array(sta0.loc[:, 'ob']).T
-        fo = np.array(sta0.loc[:, ('NWP', 'LightGBM')]).T
-        r = mem.corr(ob, fo)
-        me = mem.me(ob, fo)
-        mae = mem.mae(ob, fo)
-        rmse = mem.rmse(ob, fo)
-        mre = mem.mre(ob, fo)
-        df.loc[i, 'R_EC'] = r[0]
-        df.loc[i, 'ME_EC'] = me[0]
-        df.loc[i, 'MAE_EC'] = mae[0]
-        df.loc[i, 'RMSE_EC'] = rmse[0]
-        df.loc[i, 'MRE_EC'] = mre[0]
-        df.loc[i, 'R_LightGBM'] = r[1]
-        df.loc[i, 'ME_LightGBM'] = me[1]
-        df.loc[i, 'MAE_LightGBM'] = mae[1]
-        df.loc[i, 'RMSE_LightGBM'] = rmse[1]
-        df.loc[i, 'MRE_LightGBM'] = mre[1]
-    meb.set_stadata_coords(df, level=0, time=datetime.datetime(2023, 1, 1), dtime=0)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'R_EC')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.ts,
-                                    save_path=os.path.join(output_path, 'R_EC.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'ME_EC')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.me,
-                                    save_path=os.path.join(output_path, 'ME_EC.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'MAE_EC')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.mae,
-                                    save_path=os.path.join(output_path, 'MAE_EC.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'RMSE_EC')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.mae,
-                                    save_path=os.path.join(output_path, 'RMSE_EC.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'MRE_EC')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.ts,
-                                    save_path=os.path.join(output_path, 'MRE_EC.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'R_LightGBM')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.ts,
-                                    save_path=os.path.join(output_path, 'R_LightGBM.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'ME_LightGBM')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.me,
-                                    save_path=os.path.join(output_path, 'ME_LightGBM.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'MAE_LightGBM')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.mae,
-                                    save_path=os.path.join(output_path, 'MAE_LightGBM.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'RMSE_LightGBM')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.mae,
-                                    save_path=os.path.join(output_path, 'RMSE_LightGBM.png'), dpi=300)
-    meb.tool.plot_tools.scatter_sta(df.loc[:, ('level', 'time', 'dtime', 'id', 'lon', 'lat', 'MRE_LightGBM')],
-                                    value_column=0, map_extend=[108.65, 114.4, 24.5, 30.25], cmap=meb.cmaps.ts,
-                                    save_path=os.path.join(output_path, 'MRE_LightGBM.png'), dpi=300)
-    df.to_csv(os.path.join(output_path, '分站点.csv'), encoding='gb2312', index=False)
+    # 2. Load multi-year observation and forecast data.
+    obs_all, lgb_all, nwp_all = _load_forecasts(input_path, years)
+
+    # 3. Build the evaluation DataFrame and remove missing values.
+    eval_data = _build_eval_dataframe(obs_all, lgb_all, nwp_all, station_data)
+
+    # 4. Evaluate by forecast lead time.
+    _evaluate_by_lead_time(eval_data, output_path)
+
+    # 5. Evaluate by month.
+    _evaluate_by_month(eval_data, output_path)
+
+    # 6. Evaluate by wind speed grade.
+    _evaluate_by_grade(eval_data, output_path)
+
+    # 7. Evaluate by station and plot spatial maps.
+    _evaluate_by_station(eval_data, station_data, output_path)
 
 
 if __name__ == '__main__':
-    print('The program "access.py" is beginning.')
-    start = arrow.now()
+    print('Program access.py started')
+    total_start = arrow.now()
+
+    cfg = utils.load_config()
+    input_path = Path(cfg['paths']['wind5_model'])
+    output_path = Path(cfg['paths']['wind5_model']) / '图'
+    station_info_path = Path(cfg['paths']['station_csv'])
+    os.makedirs(str(output_path), exist_ok=True)
 
     if len(sys.argv) == 1:
-        main(r'D:\output\wind5', r'D:\model\wind5\图',
-             r'D:\Project\wind\国家气象观测站.csv')
-    elif len(sys.argv) == 3:
-        main(sys.argv[1], sys.argv[2], sys.argv[3])
+        main(
+            input_path=str(input_path),
+            output_path=str(output_path),
+            station_info_path=str(station_info_path),
+        )
+    elif len(sys.argv) == 4:
+        main(
+            input_path=sys.argv[1],
+            output_path=sys.argv[2],
+            station_info_path=sys.argv[3],
+        )
 
-    end = arrow.now()
-    running_time = (end - start).total_seconds()
-
-    print('The program "access.py" runs out in {:s}.'.format(format_time(running_time)))
+    total_elapsed = (arrow.now() - total_start).total_seconds()
+    print(
+        f'Program access.py finished, total time '
+        f'{utils.format_time(total_elapsed)}'
+    )

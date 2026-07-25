@@ -1,33 +1,125 @@
 #!user/bin.python3
+# -*- coding: utf-8 -*-
 
 """
-常用工具函数模块
+Utility functions module
+
+Common utility functions for configuration loading, time formatting, etc.
 
 Founded in 2026-04-03
-Modified in 2026-04-03
+Modified in 2026-07-22
 @author: yinlb
 """
+
+import os
+import pathlib
+import platform
+import typing
+
+import yaml
+
+# Global configuration cache to avoid repeated YAML reads
+_CONFIG: typing.Optional[dict] = None
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """
+    Recursively merge two dictionaries; override takes precedence.
+
+    Args:
+        base: The base dictionary to be merged into.
+        override: The overriding dictionary with higher priority.
+
+    Returns:
+        The merged dictionary (base is modified in place).
+    """
+    for key, value in override.items():
+        if (
+            key in base
+            and isinstance(base[key], dict)
+            and isinstance(value, dict)
+        ):
+            _deep_merge(base=base[key], override=value)
+        else:
+            base[key] = value
+    return base
+
+
+def load_config(local_name: typing.Optional[str] = None) -> dict:
+    """
+    Load and merge the base and local configuration files.
+
+    The base configuration is located at config/config.yaml. The local
+    configuration is selected automatically based on the operating system:
+    - Windows: config/config.local.windows.yaml
+    - Linux: config/config.local.linux.yaml
+
+    It can also be specified via the parameter or the environment variable
+    WIND_10M_LOCAL_CONFIG.
+
+    Args:
+        local_name: Name of the local configuration file, default None
+            (automatically selected by platform).
+
+    Returns:
+        The merged configuration dictionary.
+    """
+    global _CONFIG
+    # 1. Load the base config once and cache it globally for repeated calls.
+    if _CONFIG is None:
+        config_dir = pathlib.Path(__file__).parent.parent / 'config'
+        with open(
+            config_dir / 'config.yaml', 'r', encoding='utf-8'
+        ) as file_handle:
+            _CONFIG = yaml.safe_load(file_handle)
+
+        # 2. Determine the local override:
+        #    explicit argument > env variable > platform default.
+        if local_name is None:
+            local_name = os.environ.get('WIND_10M_LOCAL_CONFIG')
+        if local_name is None:
+            sys_platform = platform.system().lower()
+            if sys_platform == 'windows':
+                local_name = 'config.local.windows.yaml'
+            elif sys_platform == 'linux':
+                local_name = 'config.local.linux.yaml'
+            else:
+                # Fallback for unknown platforms; keeps the three-file
+                # convention.
+                local_name = 'config.local.yaml'
+
+        # 3. Deep-merge the local override into the base config if it exists.
+        local_path = config_dir / local_name
+        if local_path.exists():
+            with open(
+                local_path, 'r', encoding='utf-8'
+            ) as file_handle:
+                local_cfg = yaml.safe_load(file_handle)
+            _deep_merge(base=_CONFIG, override=local_cfg)
+
+    return _CONFIG
 
 
 def format_time(second: float, is_abbreviation: bool = False) -> str:
     """
-    将秒数格式化为易读的时间字符串
-    
-    用于程序运行时间统计等场景，支持缩写和完整两种格式。
-    
-    参数:
-        second: 秒数，必须为非负数
-        is_abbreviation: 是否使用缩写格式, 默认为False
-            - True: 返回 '45.5s', '5m', '2h' 等缩写格式
-            - False: 返回 '45.5 seconds', '5 minutes', '2 hours' 等完整格式
-    
-    返回:
-        格式化后的时间字符串
-    
-    异常:
-        ValueError: 当输入秒数为负数时抛出
-    
-    示例:
+    Format seconds as a human-readable time string.
+
+    Used for program running-time statistics, etc. Supports both abbreviated
+    and full formats.
+
+    Args:
+        second: Number of seconds, must be non-negative.
+        is_abbreviation: Whether to use the abbreviated format, default False.
+            - True: Returns '45.5s', '5m', '2h', etc.
+            - False: Returns '45.5 seconds', '5 minutes', '2 hours', etc.
+
+    Returns:
+        The formatted time string.
+
+    Raises:
+        ValueError: If the input seconds is negative.
+
+    Examples:
         >>> format_time(45.5)
         '45.5 seconds'
         >>> format_time(45.5, is_abbreviation=True)
@@ -37,9 +129,11 @@ def format_time(second: float, is_abbreviation: bool = False) -> str:
         >>> format_time(7200, is_abbreviation=True)
         '2.0h'
     """
+    # Negative durations are not supported by this simple formatter.
     if second < 0:
         raise ValueError('Input seconds cannot be negative')
-    
+
+    # Choose the format first, then pick the largest natural unit (s, m, h).
     if is_abbreviation:
         if second <= 60:
             time_str = str(second) + 's'
@@ -56,5 +150,5 @@ def format_time(second: float, is_abbreviation: bool = False) -> str:
             time_str = str(second / 60) + ' minutes'
         else:
             time_str = str(second / 3600) + ' hours'
-    
+
     return time_str

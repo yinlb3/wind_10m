@@ -1,1 +1,2 @@
-# src 包初始化
+# -*- coding: utf-8 -*-
+"""src package initialization."""

@@ -41,9 +41,20 @@ logs/
 venv/
 env/
 .env
+.env/
+.venv/
 
 # Output
 output/
 results/
 figures/*.png
 figures/*.jpg
+
+# Local configuration files (privacy/security)
+config/*.local.yaml
+config/*.local.windows.yaml
+config/*.local.linux.yaml
+
+# Backup and temporary files
+*.bak
+_*.py

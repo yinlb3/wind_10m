@@ -1,196 +1,286 @@
 #!user/bin.python3
+# -*- coding: utf-8 -*-
 
 """
 Founded in 2024-08-18
-Modified in 2024-08-20
+Modified in 2026-07-21
 @author: yinlb
 """
+import copy
 import os
+import pathlib
 import sys
 import typing
 
 import arrow
 import numpy as np
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+
+from src import utils
+
 
 class PDF:
-    def __init__(self):
-        self.c = None
+    """Probability density function matching model."""
 
-    def fit(self, ob: np.ndarray, pr: np.ndarray) -> None:
-        # index = ~np.isnan(ob) & ~np.isnan(pr)
-        # ob = ob[index]
-        # pr = pr[index]
-        ob = ob[~np.isnan(ob)]
-        pr = pr[~np.isnan(pr)]
-        a = np.unique(ob)
-        a = np.sort(a)
-        self.c = np.zeros((len(a), 2), dtype=np.float32)
-        self.c[:, 0] = a
-        pr = np.sort(pr)
-        for i, a0 in enumerate(a):
-            p0 = np.mean(ob <= a0)
-            j = round(p0 * (len(pr) - 1))
-            self.c[i, 1] = pr[j]
+    def __init__(self) -> None:
+        """Initialize the model with an empty mapping table."""
+        self._table = None
 
-    def predict(self, pr0: np.ndarray) -> typing.Optional[np.ndarray]:
-        if self.c is None:
+    def copy(self) -> 'PDF':
+        """Return a deep copy of this model.
+
+        Returns:
+            PDF: A deep copy of this instance.
+        """
+        return copy.deepcopy(self)
+
+    def fit(self, observations: np.ndarray, forecasts: np.ndarray) -> None:
+        """Fit the mapping table from observations to forecasts.
+
+        Args:
+            observations: Array of observed values.
+            forecasts: Array of forecast values.
+        """
+        observations = observations[~np.isnan(observations)]
+        forecasts = forecasts[~np.isnan(forecasts)]
+        levels = np.unique(observations)
+        levels = np.sort(levels)
+        self._table = np.zeros((len(levels), 2), dtype=np.float32)
+        self._table[:, 0] = levels
+        sorted_fcsts = np.sort(forecasts)
+        for i, level in enumerate(levels):
+            quantile = np.mean(observations <= level)
+            idx = round(quantile * (len(sorted_fcsts) - 1))
+            self._table[i, 1] = sorted_fcsts[idx]
+
+    def predict(self, forecasts: np.ndarray) -> typing.Optional[np.ndarray]:
+        """Apply the fitted mapping to forecast values.
+
+        Args:
+            forecasts: Array of forecast values to correct.
+
+        Returns:
+            Corrected array with the same shape, or None if not fitted.
+        """
+        if self._table is None:
             return None
-        shape = pr0.shape
-        pr0 = np.reshape(pr0, -1)
-        pr = np.zeros_like(pr0) + np.nan
-        for i in range(pr0.size):
-            value = pr0[i]
+        shape = forecasts.shape
+        flat = np.reshape(forecasts, -1)
+        corrected = np.zeros_like(flat) + np.nan
+        for i in range(flat.size):
+            value = flat[i]
             if np.isnan(value):
                 continue
-            if value < self.c[0, 1]:
-                pr[i] = self.c[0, 0]
+            if value < self._table[0, 1]:
+                corrected[i] = self._table[0, 0]
                 continue
-            if value > self.c[-1, 1]:
-                pr[i] = self.c[-1, 0]
+            if value > self._table[-1, 1]:
+                corrected[i] = self._table[-1, 0]
                 continue
             left = 0
-            right = self.c.shape[0] - 1
+            right = self._table.shape[0] - 1
             while right - left > 1:
                 mid = round((left + right) / 2)
-                if value <= self.c[mid, 1]:
+                if value <= self._table[mid, 1]:
                     right = mid
                 else:
                     left = mid
-            if self.c[right, 1] == self.c[left, 1]:
-                pr[i] = (self.c[right, 0] + self.c[left, 0]) / 2
+            if self._table[right, 1] == self._table[left, 1]:
+                corrected[i] = (
+                    self._table[right, 0] + self._table[left, 0]
+                ) / 2
             else:
-                k = (self.c[right, 0] - self.c[left, 0]) / (self.c[right, 1] - self.c[left, 1])
-                pr[i] = self.c[left, 0] + k * (value - self.c[left, 1])
-        pr = np.reshape(pr, shape)
-        return pr
+                slope = (
+                    (self._table[right, 0] - self._table[left, 0])
+                    / (self._table[right, 1] - self._table[left, 1])
+                )
+                corrected[i] = (
+                    self._table[left, 0]
+                    + slope * (value - self._table[left, 1])
+                )
+        corrected = np.reshape(corrected, shape)
+        return corrected
 
 
 def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
+    """Interpolate forecast lead times to 1-hour resolution.
+
+    Args:
+        data: Input array with original lead-time dimension.
+        is_0_84: If True, interpolate the full 0-84 hour range.
+
+    Returns:
+        The interpolated array.
+    """
+    data = np.copy(data)
     if is_0_84:
         for i in range(24):
-            data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-            data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
-        data[:, 73, :, :] = data[:, 72, :, :] * 5 / 6 + data[:, 78, :, :] / 6
-        data[:, 74, :, :] = data[:, 72, :, :] * 2 / 3 + data[:, 78, :, :] / 3
-        data[:, 75, :, :] = data[:, 72, :, :] / 2 + data[:, 78, :, :] / 2
-        data[:, 76, :, :] = data[:, 72, :, :] / 3 + data[:, 78, :, :] * 2 / 3
-        data[:, 77, :, :] = data[:, 72, :, :] / 6 + data[:, 78, :, :] * 5 / 6
-        data[:, 79, :, :] = data[:, 78, :, :] * 5 / 6 + data[:, 84, :, :] / 6
-        data[:, 80, :, :] = data[:, 78, :, :] * 2 / 3 + data[:, 84, :, :] / 3
-        data[:, 81, :, :] = data[:, 78, :, :] / 2 + data[:, 84, :, :] / 2
-        data[:, 82, :, :] = data[:, 78, :, :] / 3 + data[:, 84, :, :] * 2 / 3
-        data[:, 83, :, :] = data[:, 78, :, :] / 6 + data[:, 84, :, :] * 5 / 6
+            data[:, 3 * i + 1, :, :] = (
+                data[:, 3 * i, :, :] * 2 / 3
+                + data[:, 3 * i + 3, :, :] / 3
+            )
+            data[:, 3 * i + 2, :, :] = (
+                data[:, 3 * i, :, :] / 3
+                + data[:, 3 * i + 3, :, :] * 2 / 3
+            )
+        data[:, 73, :, :] = (
+            data[:, 72, :, :] * 5 / 6
+            + data[:, 78, :, :] / 6
+        )
+        data[:, 74, :, :] = (
+            data[:, 72, :, :] * 2 / 3
+            + data[:, 78, :, :] / 3
+        )
+        data[:, 75, :, :] = (
+            data[:, 72, :, :] / 2
+            + data[:, 78, :, :] / 2
+        )
+        data[:, 76, :, :] = (
+            data[:, 72, :, :] / 3
+            + data[:, 78, :, :] * 2 / 3
+        )
+        data[:, 77, :, :] = (
+            data[:, 72, :, :] / 6
+            + data[:, 78, :, :] * 5 / 6
+        )
+        data[:, 79, :, :] = (
+            data[:, 78, :, :] * 5 / 6
+            + data[:, 84, :, :] / 6
+        )
+        data[:, 80, :, :] = (
+            data[:, 78, :, :] * 2 / 3
+            + data[:, 84, :, :] / 3
+        )
+        data[:, 81, :, :] = (
+            data[:, 78, :, :] / 2
+            + data[:, 84, :, :] / 2
+        )
+        data[:, 82, :, :] = (
+            data[:, 78, :, :] / 3
+            + data[:, 84, :, :] * 2 / 3
+        )
+        data[:, 83, :, :] = (
+            data[:, 78, :, :] / 6
+            + data[:, 84, :, :] * 5 / 6
+        )
     else:
         for i in range(8):
-            data[:, 3 * i + 1, :, :] = data[:, 3 * i, :, :] * 2 / 3 + data[:, 3 * i + 3, :, :] / 3
-            data[:, 3 * i + 2, :, :] = data[:, 3 * i, :, :] / 3 + data[:, 3 * i + 3, :, :] * 2 / 3
+            data[:, 3 * i + 1, :, :] = (
+                data[:, 3 * i, :, :] * 2 / 3
+                + data[:, 3 * i + 3, :, :] / 3
+            )
+            data[:, 3 * i + 2, :, :] = (
+                data[:, 3 * i, :, :] / 3
+                + data[:, 3 * i + 3, :, :] * 2 / 3
+            )
     return data
 
 
 def uv_to_ds(uv: np.ndarray) -> np.ndarray:
+    """Convert UV wind components to wind speed and direction.
+
+    Args:
+        uv: Array with UV components in the last dimension.
+
+    Returns:
+        Array with direction and speed in the last dimension.
+    """
     ds = np.zeros_like(uv, dtype=np.float32) + np.nan
-    ds[:, :, :, 1] = np.sqrt(uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2)
-    ds[:, :, :, 0] = 180 + np.arctan2(uv[:, :, :, 0], uv[:, :, :, 1]) * 180 / np.pi
+    ds[:, :, :, 1] = np.sqrt(
+        uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2
+    )
+    ds[:, :, :, 0] = 180 + np.arctan2(
+        uv[:, :, :, 0], uv[:, :, :, 1]
+    ) * 180 / np.pi
     return ds
 
 
-def format_time(second: float, is_abbreviation: bool = False) -> str:
-    r"""Format time.
+def main() -> None:
+    """Run PDFM cross-validation and save corrected forecasts."""
+    cfg = utils.load_config()
+    input_path = pathlib.Path(cfg['paths']['wind_data'])
+    output_path = pathlib.Path(cfg['paths']['project_wind']) / '97'
+    os.makedirs(output_path, exist_ok=True)
 
-    :param second: A float number representing the number of seconds.
-    :param is_abbreviation: A boolean variable representing whether processing to abbreviation.
-        The default value is False.
-    :return: A sequence of strings representing the time. For example: '43.5 seconds'
-    :raise ValueError: The value of input parameter 'second' is wrong.
-    """
-    if second < 0:
-        raise ValueError('The input parameter "second" cannot be negative.')
-    elif is_abbreviation:
-        if second <= 60:
-            time_str = str(second) + 's'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'm'
-        else:
-            time_str = str(second / 3600) + 'h'
-    else:
-        if second <= 1:
-            time_str = str(second) + ' second'
-        elif second <= 60:
-            time_str = str(second) + ' seconds'
-        elif second <= 3600:
-            time_str = str(second / 60) + 'minutes'
-        else:
-            time_str = str(second / 3600) + 'hours'
+    years = cfg['constants']['years']
+    nwp_template = cfg['templates']['nwp_npy']
+    obs_template = cfg['templates']['obs_npy']
 
-    return time_str
-
-
-def main(input_path: str, output_path: str) -> None:
     data_list = list()
     label_list = list()
-    for i in range(2017, 2023):
-        data_list.append(np.load(os.path.join(input_path, 'nwp{:d}.npy'.format(i))))
-        label_list.append(np.load(os.path.join(input_path, 'ob{:d}.npy'.format(i))))
-        # print(i)
+    for year in years:
+        data_file = input_path / nwp_template.format(year=year)
+        label_file = input_path / obs_template.format(year=year)
+        data_list.append(np.load(str(data_file)))
+        label_list.append(np.load(str(label_file)))
 
-    for i in range(6):
-        year = 2017 + i
-        data_list2 = data_list.copy()
-        data_list2.pop(i)
-        label_list2 = label_list.copy()
-        label_list2.pop(i)
-        data = np.vstack(data_list2)
-        train_data = data
-        train_data = interp(train_data[:, 12:37, :, :])[:, 1:, :, :]
-        train_label = np.vstack(label_list2)
+    n_years = len(years)
+    for i in range(n_years):
+        year = years[i]
+        train_data_list = data_list.copy()
+        train_data_list.pop(i)
+        train_label_list = label_list.copy()
+        train_label_list.pop(i)
+
+        all_data = np.vstack(train_data_list)
+        train_data = interp(all_data[:, 12:37, :, :])[:, 1:, :, :]
+        train_label = np.vstack(train_label_list)
         train_label = train_label[:, 13:37, :, 3]
         train_label[train_label > 100] = np.nan
-        data = data_list[i]
-        test_data = data
-        test_data = interp(test_data[:, 12:37, :, :])[:, 1:, :, :]
+
+        all_data = data_list[i]
+        test_data = interp(all_data[:, 12:37, :, :])[:, 1:, :, :]
         test_label = label_list[i]
         test_label = test_label[:, 13:37, :, 3]
         test_label[test_label > 100] = np.nan
-        nwp_train_label = uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
-        nwp_test_label = uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
-        # 方案一
+
+        nwp_train = uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
+        nwp_test = uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
+
+        # Method 1: global PDFM.
         model = PDF()
-        model.fit(train_label, nwp_train_label)
-        predict_label = model.predict(nwp_test_label)
-        np.save(os.path.join(output_path, f'pdfm_1_{year}.npy'), predict_label)
-        # 方案二
-        predict_label = np.zeros_like(nwp_test_label) + np.nan
+        model.fit(train_label, nwp_train)
+        predict_label = model.predict(nwp_test)
+        np.save(output_path / f'pdfm_1_{year}.npy', predict_label)
+
+        # Method 2: lead-time-specific PDFM.
+        predict_label = np.zeros_like(nwp_test) + np.nan
         for j in range(24):
             model = PDF()
-            model.fit(train_label[:, j, :], nwp_train_label[:, j, :])
-            predict_label[:, j, :] = model.predict(nwp_test_label[:, j, :])
-        np.save(os.path.join(output_path, f'pdfm_2_{year}.npy'), predict_label)
-        # 方案三
-        predict_label = np.zeros_like(nwp_test_label) + np.nan
+            model.fit(train_label[:, j, :], nwp_train[:, j, :])
+            predict_label[:, j, :] = model.predict(nwp_test[:, j, :])
+        np.save(output_path / f'pdfm_2_{year}.npy', predict_label)
+
+        # Method 3: station-specific PDFM.
+        predict_label = np.zeros_like(nwp_test) + np.nan
         for j in range(97):
             model = PDF()
-            model.fit(train_label[:, :, j], nwp_train_label[:, :, j])
-            predict_label[:, :, j] = model.predict(nwp_test_label[:, :, j])
-        np.save(os.path.join(output_path, f'pdfm_3_{year}.npy'), predict_label)
-        # 方案四
-        predict_label = np.zeros_like(nwp_test_label) + np.nan
+            model.fit(train_label[:, :, j], nwp_train[:, :, j])
+            predict_label[:, :, j] = model.predict(nwp_test[:, :, j])
+        np.save(output_path / f'pdfm_3_{year}.npy', predict_label)
+
+        # Method 4: lead-time and station-specific PDFM.
+        predict_label = np.zeros_like(nwp_test) + np.nan
         for j in range(24):
             for k in range(97):
                 model = PDF()
-                model.fit(train_label[:, j, k], nwp_train_label[:, j, k])
-                predict_label[:, j, k] = model.predict(nwp_test_label[:, j, k])
-        np.save(os.path.join(output_path, f'pdfm_4_{year}.npy'), predict_label)
-        print(year)
+                model.fit(train_label[:, j, k], nwp_train[:, j, k])
+                predict_label[:, j, k] = model.predict(nwp_test[:, j, k])
+        np.save(output_path / f'pdfm_4_{year}.npy', predict_label)
+
+        print(f'Year {year} finished.')
 
 
 if __name__ == '__main__':
-    print('The program "pdfm.py" is beginning.')
+    print('Program pdfm.py started.')
     start = arrow.now()
 
-    main(r'D:\data\wind', r'D:\Project\wind\97')
+    main()
 
-    end = arrow.now()
-    running_time = (end - start).total_seconds()
+    elapsed = (arrow.now() - start).total_seconds()
+    print(
+        'Program pdfm.py finished, total time '
+        f'{utils.format_time(elapsed)}.'
+    )
 
-    print('The program "pdfm.py" runs out in {:s}.'.format(format_time(running_time)))

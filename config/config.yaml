@@ -1,0 +1,47 @@
+# Project global configuration (wind_10m)
+# Put local machine-specific paths in config.local.windows.yaml or
+# config.local.linux.yaml, which are ignored by Git.
+
+paths:
+  # Data directories
+  wind_data: '<WIND_DATA_DIR>'          # e.g. D:\data\wind
+  ec_station: '<EC_STATION_DIR>'        # e.g. D:\data\ec_station\wind97
+  station_obs: '<STATION_OBS_DIR>'     # e.g. D:\data\station_obs
+
+  # Model and output directories
+  wind2_model: '<WIND2_MODEL_DIR>'     # e.g. D:\model\wind2
+  wind5_model: '<WIND5_MODEL_DIR>'     # e.g. D:\model\wind5
+  output_dir: '<OUTPUT_DIR>'            # generic output directory
+  model_dir: '<MODEL_DIR>'              # generic model checkpoint directory
+
+  # Shared station info and evaluation output
+  project_wind: '<PROJECT_WIND_DIR>'    # e.g. D:\Project\wind
+  station_csv: '<STATION_CSV_PATH>'    # e.g. D:\Project\wind\station_info.csv
+  figure_dir: '<FIGURE_DIR>'            # e.g. D:\Project\wind\97\figures
+  figure_uv_dir: '<FIGURE_UV_DIR>'      # e.g. D:\Project\wind\97-uv\figures
+
+  # EMD demo sample file
+  emd_sample_path: '<EMD_SAMPLE_PATH>'    # e.g. D:\data\emd_sample.csv
+
+  # EC raw data directory (UNC path)
+  ec4ai: '<EC4AI_DIR>'                  # e.g. \\10.110.173.91\sqxt\EC4AI
+
+# Common constants
+constants:
+  years: [2017, 2018, 2019, 2020, 2021, 2022]
+  station_num: 97
+  element_num: 30
+  missing_wind: 999017
+
+# Forecast lead time configuration
+forecast:
+  ec_start_hour: 12      # EC forecast start hour in .npy
+  ec_end_hour: 37       # EC forecast end hour in .npy (exclusive)
+  obs_start_hour: 13    # Observation/label start hour in .npy
+  obs_end_hour: 37      # Observation/label end hour in .npy (exclusive)
+  n_lead_times: 24      # Number of output lead times (12-36h, 24 hours)
+
+# Filename templates
+templates:
+  nwp_npy: 'nwp{year}.npy'
+  obs_npy: 'ob{year}.npy'
