@@ -59,8 +59,12 @@ wind_10m/
 # 1. Extract EC data to stations
 python preprocessing/extract_ec.py
 
+# 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
+python preprocessing/extract_obs.py
+
 # 2. Convert CSV to npy
 python preprocessing/convert_npy.py
+
 
 # 3. Train LightGBM model
 python models/LightGBM_uv.py

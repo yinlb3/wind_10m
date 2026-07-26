@@ -38,6 +38,9 @@ pip install torch
 # 1. 将 EC 预报数据提取到站点
 python preprocessing/extract_ec.py
 
+# 1b.（仅用于新原始观测数据）将分站 CSV 转换为 ob{year}.npy
+python preprocessing/extract_obs.py
+
 # 2. 将 CSV 文件转换为 npy 数组
 python preprocessing/convert_npy.py
 
@@ -74,6 +77,7 @@ wind_10m/
 ├── config/                  # YAML 配置文件
 ├── preprocessing/           # EC4AI 提取和 CSV → npy 转换
 │   ├── extract_ec.py
+│   ├── extract_obs.py
 │   └── convert_npy.py
 ├── models/                  # 模型训练、预测和后处理
 │   ├── LightGBM_uv.py

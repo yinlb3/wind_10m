@@ -7,6 +7,7 @@ paths:
   wind_data: '<WIND_DATA_DIR>'          # e.g. D:\data\wind
   ec_station: '<EC_STATION_DIR>'        # e.g. D:\data\ec_station\wind97
   station_obs: '<STATION_OBS_DIR>'     # e.g. D:\data\station_obs
+  sta_raw: '<STA_RAW_DIR>'            # e.g. D:\data\sta
 
   # Model and output directories
   wind2_model: '<WIND2_MODEL_DIR>'     # e.g. D:\model\wind2
@@ -32,6 +33,7 @@ constants:
   station_num: 97
   element_num: 30
   missing_wind: 999017
+  obs_suffix: ''      # extract_obs.py output filename suffix (ob{year}{_suffix}.npy)
 
 # Forecast lead time configuration
 forecast:

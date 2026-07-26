@@ -38,6 +38,9 @@ pip install torch
 # 1. Extract EC forecast data to stations
 python preprocessing/extract_ec.py
 
+# 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
+python preprocessing/extract_obs.py
+
 # 2. Convert CSV files to npy arrays
 python preprocessing/convert_npy.py
 
@@ -74,6 +77,7 @@ wind_10m/
 ├── config/                  # YAML configuration files
 ├── preprocessing/           # EC4AI extraction and CSV → npy conversion
 │   ├── extract_ec.py
+│   ├── extract_obs.py
 │   └── convert_npy.py
 ├── models/                  # Model training, prediction, and post-processing
 │   ├── LightGBM_uv.py
