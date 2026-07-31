@@ -38,6 +38,9 @@ pip install torch
 # 1. Extract EC forecast data to stations
 python preprocessing/extract_ec.py
 
+# 1a. (Optional) Download per-station obs CSVs from CMADaaS
+python preprocessing/download_obs.py
+
 # 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
 python preprocessing/extract_obs.py
 
@@ -70,12 +73,15 @@ Paths are managed through `config/config.yaml` and local override files:
 
 Copy the local example and fill in the real paths for your machine. These local files are ignored by Git.
 
+If `meb.read_station()` fails with micaps3 format errors (pandas >= 2), see <https://github.com/nmcdev/meteva/issues/193> for the fix.
+
 ## Project Structure
 
 ```
 wind_10m/
 ├── config/                  # YAML configuration files
-├── preprocessing/           # EC4AI extraction and CSV → npy conversion
+├── preprocessing/           # CMADaaS download, EC4AI extraction, CSV → npy
+│   ├── download_obs.py
 │   ├── extract_ec.py
 │   ├── extract_obs.py
 │   └── convert_npy.py
@@ -120,12 +126,14 @@ wind_10m/
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-07-25
-
 ## License
 
 This is an internal research project. No public license is provided.
 
 ## Author
 
-- **Author**: yinlb
+- **Author**: yinlb <yinlb3@foxmail.com>
+
+**Last Updated**: 2026-07-31
+
+**[中文版本](README_cn.md)**

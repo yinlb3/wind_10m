@@ -38,6 +38,9 @@ pip install torch
 # 1. 将 EC 预报数据提取到站点
 python preprocessing/extract_ec.py
 
+# 1a.（可选）从 CMADaaS 下载分站观测 CSV
+python preprocessing/download_obs.py
+
 # 1b.（仅用于新原始观测数据）将分站 CSV 转换为 ob{year}.npy
 python preprocessing/extract_obs.py
 
@@ -70,12 +73,15 @@ python evaluation/access97_uv.py
 
 复制本地示例并填写本机的真实路径。这些本地文件会被 Git 忽略。
 
+若 `meb.read_station()` 报 micaps3 格式错误（pandas >= 2），修复方法参见 <https://github.com/nmcdev/meteva/issues/193>。
+
 ## 项目结构
 
 ```
 wind_10m/
 ├── config/                  # YAML 配置文件
-├── preprocessing/           # EC4AI 提取和 CSV → npy 转换
+├── preprocessing/           # CMADaaS 下载、EC4AI 提取和 CSV → npy 转换
+│   ├── download_obs.py
 │   ├── extract_ec.py
 │   ├── extract_obs.py
 │   └── convert_npy.py
@@ -120,13 +126,14 @@ wind_10m/
 | 添加单元测试 | 为核心函数添加测试用例 | P3 |
 | 演示模型方案集成 | 重构演示模型以支持统一/分时效/分站点方案 | P2 |
 
-**最后更新**：2026-07-25
-**Last Updated**: 2026-07-25
-
 ## 许可证
 
 这是一个内部研究项目，不提供公共许可证。
 
 ## 作者
 
-- **作者**：yinlb
+- **作者**：yinlb <yinlb3@foxmail.com>
+
+**最后更新**：2026-07-31
+
+**[English](README.md)**

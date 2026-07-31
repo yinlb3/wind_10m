@@ -5,10 +5,7 @@ description: 10m wind speed machine learning forecast correction system for ECMW
 
 # Wind-10m Agent Guide
 
-> **Reference**: See `user-preferences` skill for:
-> - Coding standards
-> - Git workflow
-> - This document only records project-specific information.
+> **Reference**: This document only records project-specific information.
 
 ---
 
@@ -17,7 +14,7 @@ description: 10m wind speed machine learning forecast correction system for ECMW
 ### Your role
 
 - Maintain and extend the 10m wind speed forecast correction pipeline.
-- Ensure data preprocessing, model training, prediction, and evaluation scripts remain consistent with the skill rules.
+- Ensure data preprocessing, model training, prediction, and evaluation scripts remain consistent with the project's coding standards.
 - Keep documentation synchronized with code changes.
 
 ### Project knowledge
@@ -40,7 +37,7 @@ This project post-processes ECMWF numerical weather prediction (NWP) products to
 ```
 wind_10m/
 ├── config/                  # YAML configuration files
-├── preprocessing/           # EC4AI extraction and CSV → npy conversion
+├── preprocessing/           # CMADaaS download, EC4AI extraction, CSV → npy
 ├── models/                  # Model training, prediction, and post-processing
 ├── evaluation/              # Model evaluation and visualization
 ├── src/                     # Shared utilities (utils.py)
@@ -58,6 +55,9 @@ wind_10m/
 ```bash
 # 1. Extract EC data to stations
 python preprocessing/extract_ec.py
+
+# 1a. (Optional) Download per-station obs CSVs from CMADaaS
+python preprocessing/download_obs.py
 
 # 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
 python preprocessing/extract_obs.py
@@ -84,6 +84,7 @@ python evaluation/access.py
 - Ensure `config/config.local.windows.yaml` or `config/config.local.linux.yaml` contains valid local paths.
 - Install dependencies listed in the README.
 - Verify the meteva environment is available.
+- If `meb.read_station()` fails with micaps3 format errors (pandas >= 2), see <https://github.com/nmcdev/meteva/issues/193> for the fix.
 
 ---
 
@@ -99,7 +100,7 @@ No automated unit tests are currently in place. Manual verification steps:
 
 ## 4. Code Style 📖
 
-See `user-preferences` skill for the full coding standard. Project-specific conventions:
+Follow the general coding standards: English comments, output, and exception messages; `pathlib` for paths; YAML-managed configuration; Google-style docstrings with type annotations; lines within 80 characters. Project-specific conventions:
 
 - All comments and docstrings are in English.
 - External data column names and chart labels may remain in Chinese.
@@ -109,7 +110,7 @@ See `user-preferences` skill for the full coding standard. Project-specific conv
 
 ## 5. Git Workflow 📖
 
-See `user-preferences` skill for Git workflow. Additional notes:
+Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/Docs/Test/Config). Additional notes:
 
 - Do not commit `config/*.local*.yaml` files.
 - Do not run `git commit` or `git push` without explicit user approval.
@@ -132,7 +133,7 @@ See `user-preferences` skill for Git workflow. Additional notes:
 ### Never do
 - Commit local configuration files with real paths or credentials.
 - Run full end-to-end scripts that overwrite large output files without user confirmation.
-- Ignore skill coding standards and Git workflow rules.
+- Ignore the coding standards and Git workflow rules described above.
 
 ---
 
@@ -155,4 +156,4 @@ See `user-preferences` skill for Git workflow. Additional notes:
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-07-25
+**Last Updated**: 2026-07-31
