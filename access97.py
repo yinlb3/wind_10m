@@ -2,7 +2,7 @@
 
 """
 Founded in 2024-07-27
-Modified in 2026-09-14
+Modified in 2026-09-15
 @author: yinlb
 
 Evaluation script for 97-station 10 m wind speed forecasts.
@@ -18,10 +18,6 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from meteva import base as meb
-
-# Allow running this script directly by file path: put the project root
-# on sys.path so that project imports work.
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evaluation import access97_plots
 from src import utils
