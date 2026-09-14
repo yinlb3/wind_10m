@@ -8,7 +8,7 @@ Extract meteorological elements from EC4AI binary files to specified stations
 and output CSV format data.
 
 Founded in 2023-07-15
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 
@@ -44,6 +44,16 @@ ELEMENTS = (
 
 # Surface elements use the high-resolution 0.125-degree grid.
 N_SURFACE_ELEMENTS = 5
+
+# ==================== Parameters ====================
+# Forecast year range to extract: [YEAR_BEGIN, YEAR_END).
+YEAR_BEGIN = 2017
+YEAR_END = 2023
+# Forecast lead times to extract (hours): [BEGIN, END] with STEP.
+LEAD_TIME_BEGIN = 12
+LEAD_TIME_END = 36
+LEAD_TIME_STEP = 3
+# ====================================================
 
 
 def main(
@@ -86,12 +96,14 @@ def main(
     os.makedirs(output_dir, exist_ok=True)
 
     # ---- 2. Iterate over forecast initial times and extract data ----
-    time_begin = arrow.get('2017')
-    time_end = arrow.get('2023')
+    time_begin = arrow.get(str(YEAR_BEGIN))
+    time_end = arrow.get(str(YEAR_END))
     forecast_ref_time = time_begin
     while forecast_ref_time < time_end:
         year_month = forecast_ref_time.format('YYYYMM')
-        for lead_time in range(12, 37, 3):
+        for lead_time in range(
+            LEAD_TIME_BEGIN, LEAD_TIME_END + 1, LEAD_TIME_STEP
+        ):
             init_time = forecast_ref_time.format('MMDDHH')
             valid_time = forecast_ref_time.shift(
                 hours=lead_time
