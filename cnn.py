@@ -8,7 +8,7 @@ CNN model for 10m wind speed correction.
 10m wind speed forecasts.
 
 Founded in 2025-08-29
-Modified in 2026-07-22
+Modified in 2026-09-15
 @author: yinlb
 """
 
@@ -24,19 +24,8 @@ import torch
 from torch import nn
 from torch.utils import data as Data
 
+from models import base_torch
 from src import utils
-
-from base_torch import (
-    DEVICE,
-    DiceMSELoss2,
-    THRES1,
-    THRES2,
-    interp,
-    normalize,
-    predict,
-    prepare_data,
-    train_model,
-)
 
 
 # CNN/ResNet feature configuration.
@@ -371,7 +360,7 @@ def _train_one_target(
     data_list = []
     label_list = []
     for year in train_years:
-        nwp, obs = prepare_data(
+        nwp, obs = base_torch.prepare_data(
             data_dir / f'nwp{year}.npy',
             data_dir / f'ob{year}.npy',
             target_idx,
@@ -381,7 +370,7 @@ def _train_one_target(
         label_list.append(obs)
     train_data = np.concatenate(data_list, axis=0)
     train_label = np.concatenate(label_list, axis=0)
-    val_nwp, val_obs = prepare_data(
+    val_nwp, val_obs = base_torch.prepare_data(
         data_dir / f'nwp{val_year}.npy',
         data_dir / f'ob{val_year}.npy',
         target_idx,
@@ -398,15 +387,15 @@ def _train_one_target(
     train_y = train_label[train_mask]
     val_y = val_label[val_mask]
 
-    train_x, val_x, _, _ = normalize(train_x, val_x)
+    train_x, val_x, _, _ = base_torch.normalize(train_x, val_x)
 
     train_dataset = Data.TensorDataset(
-        torch.from_numpy(train_x).to(DEVICE),
-        torch.from_numpy(train_y).to(DEVICE),
+        torch.from_numpy(train_x).to(base_torch.DEVICE),
+        torch.from_numpy(train_y).to(base_torch.DEVICE),
     )
     val_dataset = Data.TensorDataset(
-        torch.from_numpy(val_x).to(DEVICE),
-        torch.from_numpy(val_y).to(DEVICE),
+        torch.from_numpy(val_x).to(base_torch.DEVICE),
+        torch.from_numpy(val_y).to(base_torch.DEVICE),
     )
     train_loader = Data.DataLoader(
         train_dataset, batch_size=BATCH_SIZE, shuffle=True
@@ -415,11 +404,13 @@ def _train_one_target(
         val_dataset, batch_size=BATCH_SIZE, shuffle=False
     )
 
-    model = CNN(n_features=train_x.shape[1], n_labels=1, device=DEVICE)
+    model = CNN(
+        n_features=train_x.shape[1], n_labels=1, device=base_torch.DEVICE
+    )
     weights = np.ones(len(thres), dtype=np.float32)
     weights = weights / np.sum(weights)
-    loss_function = DiceMSELoss2(thres, weights=weights)
-    model = train_model(
+    loss_function = base_torch.DiceMSELoss2(thres, weights=weights)
+    model = base_torch.train_model(
         model=model,
         loss_function=loss_function,
         train_loader=train_loader,
@@ -431,7 +422,7 @@ def _train_one_target(
         thres=thres,
     )
 
-    pred = predict(model, val_loader)
+    pred = base_torch.predict(model, val_loader)
     corr = np.corrcoef(val_y[:, 0], pred[:, 0])[0, 1]
     print(f'CNN target {target_idx}: R={corr:.4f}')
 
@@ -454,8 +445,12 @@ def main(
         train_years: Years used for training.
         val_year: Year used for validation/output.
     """
-    _train_one_target(data_dir, train_years, val_year, 3, THRES1, output_dir)
-    _train_one_target(data_dir, train_years, val_year, 7, THRES2, output_dir)
+    _train_one_target(
+        data_dir, train_years, val_year, 3, base_torch.THRES1, output_dir
+    )
+    _train_one_target(
+        data_dir, train_years, val_year, 7, base_torch.THRES2, output_dir
+    )
 
 
 if __name__ == '__main__':
