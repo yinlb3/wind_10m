@@ -36,28 +36,28 @@ pip install torch
 
 ```bash
 # 1. Extract EC forecast data to stations
-python preprocessing/extract_ec.py
+python extract_ec.py
 
 # 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
-python preprocessing/extract_obs.py
+python extract_obs.py
 
 # 2. Convert CSV files to npy arrays
-python preprocessing/convert_npy.py
+python convert_npy.py
 
 # 3. Train the LightGBM model
-python models/LightGBM_uv.py
+python lgb_uv.py
 # or
-python models/LightGBM_wind.py
+python lgb_wind.py
 
 # 4. Generate predictions
-python models/lgb_predict.py
+python lgb_predict.py
 
 # 5. Evaluate performance
-python evaluation/access.py
+python access.py
 # or
-python evaluation/access97.py
+python access97.py
 # or
-python evaluation/access97_uv.py
+python access97_uv.py
 ```
 
 ### Configuration
@@ -75,25 +75,24 @@ Copy the local example and fill in the real paths for your machine. These local 
 ```
 wind_10m/
 ├── config/                  # YAML configuration files
-├── preprocessing/           # EC4AI extraction and CSV → npy conversion
-│   ├── extract_ec.py
-│   ├── extract_obs.py
-│   └── convert_npy.py
-├── models/                  # Model training, prediction, and post-processing
-│   ├── LightGBM_uv.py
-│   ├── LightGBM_wind.py
-│   ├── LightGBM_CV.py
-│   ├── lgb_predict.py
-│   ├── avt.py
-│   ├── emd.py
-│   ├── gn.py
-│   ├── ots.py
-│   ├── pdfm.py
-│   └── pdfm_uv.py
-├── evaluation/              # Model evaluation and visualization
-│   ├── access.py
-│   ├── access97.py
-│   └── access97_uv.py
+├── extract_ec.py            # Extract EC forecast data to stations
+├── extract_obs.py           # Convert raw per-station obs CSVs to npy
+├── convert_npy.py           # Convert CSV files to npy arrays
+├── lgb_uv.py                # LightGBM UV-component training
+├── lgb_wind.py              # LightGBM wind-magnitude training
+├── lgb_cv.py                # LightGBM cross-validation
+├── lgb_predict.py           # LightGBM prediction
+├── pdfm.py / pdfm_uv.py     # PDF-matching post-processing models
+├── avt.py, cnn.py, dnn.py, emd.py, gn.py, ots.py, transformer.py
+│                            # PyTorch demo models
+├── access.py                # Evaluation (legacy station set)
+├── access97.py              # Evaluation (97 stations)
+├── access97_uv.py           # Evaluation (97 stations, UV components)
+├── models/                  # Reusable model modules
+│   └── base_torch.py        # Shared torch training utilities
+├── evaluation/              # Reusable plotting modules
+│   ├── access97_plots.py
+│   └── access97_uv_plots.py
 ├── src/                     # Shared utility modules
 │   └── utils.py
 ├── README.md
@@ -110,8 +109,13 @@ wind_10m/
 | Project foundation | Established preprocessing/config/src structure and unified path loading | 2026-04-20 |
 | Documentation standardization | Rewrote `AGENTS.md` and `README.md` in English and created `README_cn.md` | 2026-07-21 |
 | Code standards and demo formalization | Formalized torch demo models and applied coding standards across the project | 2026-07-22 |
+| New raw observation preprocessing | Added `extract_obs.py` to convert per-station raw CSVs directly into `ob{year}.npy` arrays | 2026-09-14 |
 
 ### In Progress
+
+| Task | Description |
+|------|-------------|
+| New-station-set experiment | Repeat the full pipeline on a new, larger raw dataset with a brand-new station set |
 
 ### Todo
 
@@ -120,7 +124,7 @@ wind_10m/
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-07-25
+**Last Updated**: 2026-09-15
 
 ## License
 
