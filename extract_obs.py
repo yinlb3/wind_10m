@@ -10,7 +10,7 @@ consumed by the model training scripts, replacing the per-hour CSV stage
 of convert_npy.py.
 
 Founded in 2026-07-25
-Modified in 2026-07-25
+Modified in 2026-09-15
 @author: yinlb
 """
 
@@ -22,10 +22,6 @@ from pathlib import Path
 import arrow
 import numpy as np
 import pandas as pd
-
-# Allow running this script directly by file path: put the project root
-# on sys.path so that `from src import utils` works.
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src import utils
 

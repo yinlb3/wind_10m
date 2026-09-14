@@ -9,7 +9,7 @@ verification scores, and a main routine that loads model outputs, computes
 scores, and draws comparison charts (bars, violin plots, radar plots).
 
 Founded in 2024-10-11
-Modified in 2026-07-22
+Modified in 2026-09-14
 @author: yinlb
 """
 
@@ -25,6 +25,10 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 from meteva import base as meb
+
+# Allow running this script directly by file path: put the project root
+# on sys.path so that project imports work.
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src import utils
 from evaluation import access97_uv_plots

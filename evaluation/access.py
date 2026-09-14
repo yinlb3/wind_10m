@@ -3,7 +3,7 @@
 
 """
 Founded in 2023-07-19
-Modified in 2026-07-22
+Modified in 2026-09-14
 @author: yinlb
 """
 
@@ -20,6 +20,10 @@ from matplotlib import pyplot as plt
 from meteva import base as meb
 from meteva import method as mem
 from scipy import stats
+
+# Allow running this script directly by file path: put the project root
+# on sys.path so that project imports work.
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src import utils
 

@@ -145,14 +145,20 @@ See `user-preferences` skill for Git workflow. Additional notes:
 | Project foundation | Established preprocessing/config/src structure, unified path loading, and verified syntax | 2026-04-20 |
 | Documentation standardization | Rewrote `AGENTS.md` and `README.md` in English and created `README_cn.md` | 2026-07-21 |
 | Code standards and demo formalization | Formalized torch demo models, applied coding standards across the project, and split oversized evaluation files | 2026-07-22 |
+| New raw observation preprocessing | Added `preprocessing/extract_obs.py` (per-station raw CSVs at `paths.sta_raw` → `ob{year}[_suffix].npy`, same layout as `convert_npy.py`; cleaning: direction 360→0, direction [0,360), speed [0,1000), else NaN; max-wind pair stays NaN; Inst_Max maps to gust pair). Added `sta_raw` path and `obs_suffix` constant to config (local Windows value: `dth`). Committed as `45efc52` and pushed to Gitee + GitHub | 2026-09-14 |
 
 ### In Progress
+
+| Task | Description | Notes |
+|------|-------------|-------|
+| New-station-set experiment | Repeat the full pipeline on a new, larger raw dataset (`D:\data\sta`, 2472 station CSVs, ~185M records) with a **brand-new station set** (not the original 97) | Blocked on user input: ① new station info CSV with `台站号,经度,纬度` (required by `extract_ec.py` interpolation), ② EC4AI raw data coverage for the new years, ③ exact year range. Planned changes once unblocked: make `extract_ec.py` year range configurable (currently hardcoded 2017-2023 at `extract_ec.py:89-90`); support the obs filename suffix in `LightGBM_uv.py` / `LightGBM_wind.py` / evaluation loaders (they read `ob{year}.npy` without suffix, e.g. `LightGBM_uv.py:353-354`); ensure NWP and obs npy station orders match (both ascending station ID) |
 
 ### Todo
 
 | Task | Description | Priority |
 |------|-------------|----------|
+| Extend sys.path bootstrap | Add the two-line project-root bootstrap (`sys.path.insert(0, str(Path(__file__).parent.parent))`) to remaining entry scripts (`preprocessing/convert_npy.py`, `models/LightGBM_uv.py`, `models/LightGBM_wind.py`, `models/LightGBM_CV.py`, `models/lgb_predict.py`, `models/pdfm_uv.py`) so they run by file path. Already applied to: `preprocessing/extract_obs.py`, `evaluation/access.py`, `evaluation/access97.py`, `evaluation/access97_uv.py` (**uncommitted**), and `models/pdfm.py` (pre-existing) | P2 |
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-07-25
+**Last Updated**: 2026-09-14
