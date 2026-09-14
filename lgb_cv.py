@@ -20,6 +20,23 @@ from src import utils
 
 RANDOM_SEED = 20230718
 
+# ==================== Parameters ====================
+# Forecast lead-hour window used for training [hours].
+HOUR_BEGIN = 12
+HOUR_END = 36
+# LightGBM parallel thread count.
+LGB_N_JOBS = 20
+# Hyperparameter search grid for randomized cross-validation.
+PARAM_GRID = {
+    'max_depth': (3, 4, 5),
+    'num_leaves': (7, 15, 31),
+    'subsample': (0.8, 0.9, 1.0),
+    'colsample_bytree': (0.8, 0.9, 1.0),
+    'reg_alpha': (1, 10, 1000),
+    'reg_lambda': (1, 10, 1000),
+}
+# ====================================================
+
 
 def _interp(forecast_data: np.ndarray) -> np.ndarray:
     """
@@ -133,14 +150,14 @@ def main(input_path: str, years: List[int]) -> None:
     for year in years:
         nwp_data.append(np.load(input_dir / 'nwp{:d}.npy'.format(year)))
         obs_data.append(np.load(input_dir / 'ob{:d}.npy'.format(year)))
-        print(year)
+        print(f'Loaded data for year {year}')
 
     # 2. Stack and preprocess the data.
     nwp_data = np.vstack(nwp_data)
-    nwp_data = nwp_data[:, 12:37, :, :]
+    nwp_data = nwp_data[:, HOUR_BEGIN:HOUR_END + 1, :, :]
     nwp_data = _interp(nwp_data)
     obs_data = np.vstack(obs_data)
-    obs_data = obs_data[:, 12:37, :, 2:4]
+    obs_data = obs_data[:, HOUR_BEGIN:HOUR_END + 1, :, 2:4]
     obs_data = _clean(obs_data)
     wind_uv = _ds_to_uv(obs_data)
 
@@ -156,22 +173,15 @@ def main(input_path: str, years: List[int]) -> None:
 
     # 4. Train LightGBM with randomized cross-validation search.
     regressor = lgb.LGBMRegressor(
-        n_jobs=20,
+        n_jobs=LGB_N_JOBS,
         verbose=0,
         force_col_wise=True,
         random_state=RANDOM_SEED,
     )
-    param_grid = {
-        'max_depth': (3, 4, 5),
-        'num_leaves': (7, 15, 31),
-        'subsample': (0.8, 0.9, 1.0),
-        'colsample_bytree': (0.8, 0.9, 1.0),
-        'reg_alpha': (1, 10, 1000),
-        'reg_lambda': (1, 10, 1000),
-    }
-    rand_search = ms.RandomizedSearchCV(regressor, param_grid, verbose=2)
+    rand_search = ms.RandomizedSearchCV(regressor, PARAM_GRID, verbose=2)
     rand_search.fit(features, target)
-    print(rand_search)
+    print(f'Best CV score: {rand_search.best_score_}')
+    print(f'Best parameters: {rand_search.best_params_}')
 
 
 if __name__ == '__main__':
