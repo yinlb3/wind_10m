@@ -22,6 +22,14 @@ from src import utils
 
 RANDOM_SEED = 20230718
 
+# ==================== Parameters ====================
+# Forecast lead-hour window used for training and evaluation [hours].
+HOUR_BEGIN = 12
+HOUR_END = 36
+# LightGBM parallel thread count.
+LGB_N_JOBS = 20
+# ====================================================
+
 
 def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
     """
@@ -176,7 +184,7 @@ def _train(
     u_target = targets[~is_calm, 0]
     if model_name == 'lgb':
         model = lgbm.LGBMRegressor(
-            n_jobs=20, verbose=-1, force_col_wise=True,
+            n_jobs=LGB_N_JOBS, verbose=-1, force_col_wise=True,
             random_state=RANDOM_SEED
         )
     elif model_name == 'mlr':
@@ -186,7 +194,7 @@ def _train(
     v_target = targets[~is_calm, 1]
     if model_name == 'lgb':
         model = lgbm.LGBMRegressor(
-            n_jobs=20, verbose=-1, force_col_wise=True,
+            n_jobs=LGB_N_JOBS, verbose=-1, force_col_wise=True,
             random_state=RANDOM_SEED
         )
     elif model_name == 'mlr':
@@ -361,16 +369,16 @@ def main(
         data_list2.pop(i)
         label_list2 = label_list.copy()
         label_list2.pop(i)
-        train_data = np.vstack(data_list2)[:, 12:37, :, :]
+        train_data = np.vstack(data_list2)[:, HOUR_BEGIN:HOUR_END + 1, :, :]
         train_data = _interp(train_data)
         train_label = np.vstack(label_list2)
-        train_label = train_label[:, 12:37, :, 2:4]
+        train_label = train_label[:, HOUR_BEGIN:HOUR_END + 1, :, 2:4]
         train_label = _clean(train_label)
         train_uv = _ds_to_uv(train_label)
-        test_data = data_list[i][:, 12:37, :, :]
+        test_data = data_list[i][:, HOUR_BEGIN:HOUR_END + 1, :, :]
         test_data = _interp(test_data)
         test_label = label_list[i]
-        test_label = test_label[:, 12:37, :, 2:4]
+        test_label = test_label[:, HOUR_BEGIN:HOUR_END + 1, :, 2:4]
         test_label = _clean(test_label)
         np.save(output_dir / f'ob_{year}.npy', test_label)
         nwp_uv = test_data[:, :, :, 3:5]
