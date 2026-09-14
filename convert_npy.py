@@ -8,7 +8,7 @@ Convert EC forecast CSV and observation CSV files into numpy array format
 (.npy) for subsequent model training.
 
 Founded in 2023-07-17
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 
@@ -55,6 +55,16 @@ OBS_COLUMNS = [
     '极大风速',
 ]
 
+# ==================== Parameters ====================
+# Number of hourly lead times per sample.
+N_LEAD_HOURS = 85
+# NWP forecast lead time step in hours (3-hourly within N_LEAD_HOURS).
+NWP_LEAD_STEP = 3
+# ====================================================
+
+# Number of observation data columns (OBS_COLUMNS includes the station ID).
+N_OBS_ELEMENTS = len(OBS_COLUMNS) - 1
+
 
 def main(
     nwp_csv_path: str,
@@ -91,6 +101,7 @@ def main(
     )
     station_ids = station_df.loc[:, '台站号'].to_list()
     station_ids.sort()
+    station_count = len(station_ids)
 
     time_begin = arrow.get(str(year))
     time_end = time_begin.shift(years=1)
@@ -99,9 +110,15 @@ def main(
         (time_end - time_begin).total_seconds() / 3600 / 12
     )
     # NWP: Numerical Weather Prediction
-    nwp_data = np.zeros((sample_count, 85, 97, 30), dtype=np.float32) + np.nan
+    nwp_data = np.zeros(
+        (sample_count, N_LEAD_HOURS, station_count, len(ELEMENTS)),
+        dtype=np.float32,
+    ) + np.nan
     # OBS: Observation
-    obs_data = np.zeros((sample_count, 85, 97, 8), dtype=np.float32) + np.nan
+    obs_data = np.zeros(
+        (sample_count, N_LEAD_HOURS, station_count, N_OBS_ELEMENTS),
+        dtype=np.float32,
+    ) + np.nan
     print(f'Processing year {year}, sample_count = {sample_count}')
 
     nwp_dir = Path(nwp_csv_path)
@@ -112,7 +129,7 @@ def main(
     # ---- 2. Process EC forecast data (read CSV and save as npy) ----
     for sample_idx in range(sample_count):
         forecast_ref_time = time_begin.shift(hours=12 * sample_idx)
-        for lead_time in range(0, 85, 3):
+        for lead_time in range(0, N_LEAD_HOURS, NWP_LEAD_STEP):
             filename = '{:s}.{:03d}.csv'.format(
                 forecast_ref_time.format('YYYYMMDDHH'), lead_time
             )
@@ -130,7 +147,7 @@ def main(
 
     # ---- 3. Process observation data (read CSV and save as npy) ----
     for sample_idx in range(sample_count):
-        for lead_time in range(85):
+        for lead_time in range(N_LEAD_HOURS):
             valid_time = time_begin.shift(hours=12 * sample_idx + lead_time)
             filename = valid_time.format('YYYYMMDDHH') + '.csv'
             file_path = obs_dir / valid_time.format('YYYY') / filename
@@ -139,8 +156,8 @@ def main(
                 df = df.loc[:, OBS_COLUMNS]
                 df.sort_values(by=['区站号'], inplace=True)
                 df.reset_index(drop=True, inplace=True)
-                for obs_var_idx in range(8):
-                    if len(df) == 97:
+                for obs_var_idx in range(N_OBS_ELEMENTS):
+                    if len(df) == station_count:
                         obs_data[sample_idx, lead_time, :, obs_var_idx] = (
                             df.iloc[:, obs_var_idx + 1]
                         )
