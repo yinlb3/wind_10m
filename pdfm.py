@@ -3,7 +3,7 @@
 
 """
 Founded in 2024-08-18
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 import copy
@@ -14,8 +14,6 @@ import typing
 
 import arrow
 import numpy as np
-
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from src import utils
 
