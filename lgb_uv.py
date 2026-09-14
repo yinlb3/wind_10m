@@ -3,7 +3,7 @@
 
 """
 Founded in 2023-07-18
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 import os
@@ -448,7 +448,7 @@ def main(
 
 
 if __name__ == '__main__':
-    print('Program LightGBM_uv.py started.')
+    print('Program lgb_uv.py started.')
     total_start = arrow.now()
 
     cfg = utils.load_config()
@@ -464,6 +464,6 @@ if __name__ == '__main__':
 
     total_elapsed = (arrow.now() - total_start).total_seconds()
     print(
-        f'Program LightGBM_uv.py finished, total time '
+        f'Program lgb_uv.py finished, total time '
         f'{utils.format_time(total_elapsed)}.'
     )

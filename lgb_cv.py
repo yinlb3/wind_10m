@@ -3,7 +3,7 @@
 
 """
 Founded in 2023-08-01
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 import pathlib
@@ -175,7 +175,7 @@ def main(input_path: str, years: List[int]) -> None:
 
 
 if __name__ == '__main__':
-    print('Program LightGBM_CV.py started')
+    print('Program lgb_cv.py started')
     total_start = arrow.now()
 
     cfg = utils.load_config()
@@ -186,7 +186,7 @@ if __name__ == '__main__':
 
     total_elapsed = (arrow.now() - total_start).total_seconds()
     print(
-        'Program LightGBM_CV.py finished, total time '
+        'Program lgb_cv.py finished, total time '
         '{:s}'.format(utils.format_time(total_elapsed))
     )
 

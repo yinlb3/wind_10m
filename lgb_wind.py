@@ -3,7 +3,7 @@
 
 """
 Founded in 2023-09-17
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 
@@ -376,7 +376,7 @@ def main(
 
 
 if __name__ == '__main__':
-    print('Program LightGBM_wind.py started')
+    print('Program lgb_wind.py started')
     total_start = arrow.now()
     cfg = utils.load_config()
 
@@ -400,14 +400,14 @@ if __name__ == '__main__':
         )
     else:
         print(
-            'Usage: python LightGBM_wind.py '
+            'Usage: python lgb_wind.py '
             '[input_path model_path output_path station_info_path]'
         )
         sys.exit(1)
 
     total_elapsed = (arrow.now() - total_start).total_seconds()
     print(
-        'Program LightGBM_wind.py finished, total time {}'.format(
+        'Program lgb_wind.py finished, total time {}'.format(
             utils.format_time(total_elapsed)
         )
     )
