@@ -22,6 +22,14 @@ from src import utils
 
 RANDOM_SEED = 20230718
 
+# ==================== Parameters ====================
+# Forecast lead-hour window used for training and evaluation [hours].
+HOUR_BEGIN = 12
+HOUR_END = 36
+# LightGBM parallel thread count.
+LGB_N_JOBS = 20
+# ====================================================
+
 
 def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
     """
@@ -139,7 +147,7 @@ def _train(
     features = data[valid_mask, :]
     targets = label[valid_mask]
     model = lgbm.LGBMRegressor(
-        n_jobs=20,
+        n_jobs=LGB_N_JOBS,
         verbose=-1,
         force_col_wise=True,
         random_state=RANDOM_SEED,
@@ -337,15 +345,19 @@ def main(
         label_list_copy.pop(i)
 
         train_data = np.vstack(data_list_copy)
-        train_data = _interp(train_data[:, 12:37, :, :])[:, 1:, :, :]
+        train_data = _interp(
+            train_data[:, HOUR_BEGIN:HOUR_END + 1, :, :]
+        )[:, 1:, :, :]
         train_label = np.vstack(label_list_copy)
-        train_label = train_label[:, 13:37, :, 3]
+        train_label = train_label[:, HOUR_BEGIN + 1:HOUR_END + 1, :, 3]
         train_label[train_label > 100] = np.nan
 
         test_data = data_list[i]
-        test_data = _interp(test_data[:, 12:37, :, :])[:, 1:, :, :]
+        test_data = _interp(
+            test_data[:, HOUR_BEGIN:HOUR_END + 1, :, :]
+        )[:, 1:, :, :]
         test_label = label_list[i]
-        test_label = test_label[:, 13:37, :, 3]
+        test_label = test_label[:, HOUR_BEGIN + 1:HOUR_END + 1, :, 3]
         test_label[test_label > 100] = np.nan
 
         nwp_train_label = _uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
@@ -371,8 +383,8 @@ def main(
             predict_label = _test2(models, test_data, j + 1)
             output_file = pathlib.Path(output_path) / f'lgb_{j + 1}_{year}.npy'
             np.save(str(output_file), predict_label)
-        print(year)
-    print(elapsed_times)
+        print(f'Training and prediction for {year} completed.')
+    print(f'Training time per option (minutes): {elapsed_times}')
 
 
 if __name__ == '__main__':
