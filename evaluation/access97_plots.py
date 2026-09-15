@@ -4,11 +4,11 @@
 Plotting helpers for evaluation/access97.py.
 
 Founded in 2026-07-22
-Modified in 2026-07-22
+Modified in 2026-09-15
 @author: yinlb
 """
 
-from pathlib import Path
+import pathlib
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,7 @@ from matplotlib import pyplot as plt
 
 def _plot_rmse_improvement_bars(
     rmse_improve: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
     filename: str,
     x_labels: list,
     x_label: str,
@@ -71,7 +71,7 @@ def _plot_rmse_improvement_bars(
 def _plot_rmse_scatter(
     station_info: pd.DataFrame,
     rmse_improve_sta: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
     var_name: str,
     x_label: str,
     x_lims: tuple,
@@ -136,7 +136,7 @@ def _plot_rmse_scatter(
 
 def _plot_rmse_violin(
     rmse_improve_sta: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Draw violin plot of station RMSE improvement distributions.

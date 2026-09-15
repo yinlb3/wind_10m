@@ -5,6 +5,7 @@ Founded in 2024-07-27
 Modified in 2026-09-15
 @author: yinlb
 """
+
 import os
 import pathlib
 import sys
@@ -84,7 +85,7 @@ def uv_to_ds(uv_data: np.ndarray) -> np.ndarray:
     )
     dir_speed[:, :, :, 0] = 180 + np.arctan2(
         uv_data[:, :, :, 0], uv_data[:, :, :, 1]
-    ) * 180 / np.pi
+   ) * 180 / np.pi
     return dir_speed
 
 
@@ -125,7 +126,7 @@ def train2(data: np.ndarray, label: np.ndarray, option: int) -> typing.List:
         option: Training strategy (1-4).
 
     Returns:
-        List of trained models.
+        typing.List of trained models.
     """
     models = list()
     n_samples, n_lead, n_stations, n_features = data.shape
@@ -134,21 +135,21 @@ def train2(data: np.ndarray, label: np.ndarray, option: int) -> typing.List:
     elif option == 2:
         for i in range(n_lead):
             lead_data = np.reshape(
-                data[:, i, :, :], newshape=(
+                data[:, i, :, :], shape=(
                     n_samples, 1, n_stations, n_features
                 )
             )
             lead_label = np.reshape(
-                label[:, i, :], newshape=(n_samples, 1, n_stations)
+                label[:, i, :], shape=(n_samples, 1, n_stations)
             )
             models.append(train(lead_data, lead_label))
     elif option == 3:
         for i in range(n_stations):
             sta_data = np.reshape(
-                data[:, :, i, :], newshape=(n_samples, n_lead, 1, n_features)
+                data[:, :, i, :], shape=(n_samples, n_lead, 1, n_features)
             )
             sta_label = np.reshape(
-                label[:, :, i], newshape=(n_samples, n_lead, 1)
+                label[:, :, i], shape=(n_samples, n_lead, 1)
             )
             models.append(train(sta_data, sta_label))
     elif option == 4:
@@ -156,10 +157,10 @@ def train2(data: np.ndarray, label: np.ndarray, option: int) -> typing.List:
             models.append(list())
             for j in range(n_stations):
                 cell_data = np.reshape(
-                    data[:, i, j, :], newshape=(n_samples, 1, 1, n_features)
+                    data[:, i, j, :], shape=(n_samples, 1, 1, n_features)
                 )
                 cell_label = np.reshape(
-                    label[:, i, j], newshape=(n_samples, 1, 1)
+                    label[:, i, j], shape=(n_samples, 1, 1)
                 )
                 models[i].append(train(cell_data, cell_label))
     return models
@@ -188,7 +189,7 @@ def test2(models: typing.List, data: np.ndarray, option: int) -> np.ndarray:
     """Predict with the selected model configuration.
 
     Args:
-        models: List of trained models.
+        models: typing.List of trained models.
         data: Input features.
         option: Prediction strategy (1-4).
 
@@ -198,40 +199,40 @@ def test2(models: typing.List, data: np.ndarray, option: int) -> np.ndarray:
     n_samples, n_lead, n_stations, n_features = data.shape
     pred = np.zeros(
         shape=(n_samples, n_lead, n_stations), dtype=data.dtype
-    ) + np.nan
+   ) + np.nan
     if option == 1:
         pred = test(models[0], data)
     elif option == 2:
         for i in range(n_lead):
             model = models[i]
             lead_data = np.reshape(
-                data[:, i, :, :], newshape=(
+                data[:, i, :, :], shape=(
                     n_samples, 1, n_stations, n_features
                 )
             )
             lead_pred = test(model, lead_data)
             pred[:, i, :] = np.reshape(
-                lead_pred, newshape=(n_samples, n_stations)
+                lead_pred, shape=(n_samples, n_stations)
             )
     elif option == 3:
         for i in range(n_stations):
             model = models[i]
             sta_data = np.reshape(
-                data[:, :, i, :], newshape=(n_samples, n_lead, 1, n_features)
+                data[:, :, i, :], shape=(n_samples, n_lead, 1, n_features)
             )
             sta_pred = test(model, sta_data)
             pred[:, :, i] = np.reshape(
-                sta_pred, newshape=(n_samples, n_lead)
+                sta_pred, shape=(n_samples, n_lead)
             )
     elif option == 4:
         for i in range(n_lead):
             for j in range(n_stations):
                 model = models[i][j]
                 cell_data = np.reshape(
-                    data[:, i, j, :], newshape=(n_samples, 1, 1, n_features)
+                    data[:, i, j, :], shape=(n_samples, 1, 1, n_features)
                 )
                 cell_pred = test(model, cell_data)
-                pred[:, i, j] = np.reshape(cell_pred, newshape=n_samples)
+                pred[:, i, j] = np.reshape(cell_pred, shape=n_samples)
     return pred
 
 
@@ -242,7 +243,7 @@ def test3(models: typing.List, data: np.ndarray, option: int) -> np.ndarray:
     predict every station, producing a cross-station prediction matrix.
 
     Args:
-        models: List of trained station models.
+        models: typing.List of trained station models.
         data: Input features.
         option: Must be 3 for this function.
 
@@ -254,19 +255,19 @@ def test3(models: typing.List, data: np.ndarray, option: int) -> np.ndarray:
     pred = np.zeros(
         shape=(n_stations, n_samples, n_lead, n_stations),
         dtype=data.dtype
-    ) + np.nan
+   ) + np.nan
     if option == 3:
         for i in range(n_stations):
             model = models[i]
             for j in range(n_stations):
                 sta_data = np.reshape(
-                    data[:, :, j, :], newshape=(
+                    data[:, :, j, :], shape=(
                         n_samples, n_lead, 1, n_features
                     )
                 )
                 sta_pred = test(model, sta_data)
                 pred[i, :, :, j] = np.reshape(
-                    sta_pred, newshape=(n_samples, n_lead)
+                    sta_pred, shape=(n_samples, n_lead)
                 )
     return pred
 
@@ -283,7 +284,7 @@ def main(
         input_path: Directory containing nwp{year}.npy and ob{year}.npy files.
         model_path: Directory containing trained model files.
         output_path: Directory where prediction files will be saved.
-        station_csv_path: Path to the station information CSV.
+        station_csv_path: pathlib.Path to the station information CSV.
     """
     input_path = pathlib.Path(input_path)
     model_path = pathlib.Path(model_path)

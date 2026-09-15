@@ -15,9 +15,9 @@ Modified in 2026-09-15
 """
 
 import os
+import pathlib
 import sys
 import typing
-from pathlib import Path
 
 import arrow
 import numpy as np
@@ -84,7 +84,7 @@ def _clean_pair(
     return direction, speed
 
 
-def _load_station(file_path: Path) -> pd.DataFrame:
+def _load_station(file_path: pathlib.Path) -> pd.DataFrame:
     """
     Load and clean one raw station CSV file.
 
@@ -92,7 +92,7 @@ def _load_station(file_path: Path) -> pd.DataFrame:
     pairs, and fill the unavailable hourly maximum wind pair with NaN.
 
     Args:
-        file_path (Path): Path of the raw station CSV file.
+        file_path (pathlib.Path): pathlib.Path of the raw station CSV file.
 
     Returns:
         pd.DataFrame: Long-table DataFrame with a Datetime column and the
@@ -152,7 +152,7 @@ def _build_year_array(
     station_count = len(station_ids)
     obs_data = np.zeros(
         (sample_count, N_LEAD_HOURS, station_count, 8), dtype=np.float32
-    ) + np.nan
+   ) + np.nan
     for sample_idx in range(sample_count):
         for lead_time in range(N_LEAD_HOURS):
             valid_time = time_begin.shift(
@@ -190,8 +190,8 @@ def main(
         None
     """
     # ---- 1. Collect all station files from the input directory ----
-    input_dir = Path(input_path)
-    output_dir = Path(output_path)
+    input_dir = pathlib.Path(input_path)
+    output_dir = pathlib.Path(output_path)
     os.makedirs(output_dir, exist_ok=True)
     station_files = sorted(input_dir.glob('*.csv'))
     print(f'Found {len(station_files)} station files in {input_dir}')

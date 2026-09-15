@@ -8,14 +8,14 @@ Shared loss functions, data preprocessing helpers, and training utilities
 used by CNN, DNN, and Transformer wind speed correction models.
 
 Founded in 2025-08-29
-Modified in 2026-07-22
+Modified in 2026-09-15
 @author: yinlb
 """
 
 import copy
 import os
+import pathlib
 import typing
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -66,7 +66,7 @@ class DiceLoss(nn.Module):
         ] = None,
         smooth: float = 1e-5,
         reduction: str = 'mean',
-    ) -> None:
+   ) -> None:
         """
         Initialize DiceLoss.
 
@@ -95,7 +95,7 @@ class DiceLoss(nn.Module):
         self,
         inputs: torch.Tensor,
         targets: torch.Tensor,
-    ) -> torch.Tensor:
+   ) -> torch.Tensor:
         """
         Compute dice loss.
 
@@ -137,7 +137,7 @@ class DiceMSELoss(nn.Module):
         ] = None,
         smooth: float = 1e-5,
         reduction: str = 'mean',
-    ) -> None:
+   ) -> None:
         """
         Initialize DiceMSELoss.
 
@@ -170,7 +170,7 @@ class DiceMSELoss(nn.Module):
         self,
         inputs: torch.Tensor,
         targets: torch.Tensor,
-    ) -> torch.Tensor:
+   ) -> torch.Tensor:
         """
         Compute combined loss.
 
@@ -203,7 +203,7 @@ class DiceMSELoss2(nn.Module):
         ] = None,
         smooth: float = 1e-5,
         reduction: str = 'mean',
-    ) -> None:
+   ) -> None:
         """
         Initialize DiceMSELoss2.
 
@@ -234,7 +234,7 @@ class DiceMSELoss2(nn.Module):
         self,
         inputs: torch.Tensor,
         targets: torch.Tensor,
-    ) -> torch.Tensor:
+   ) -> torch.Tensor:
         """
         Compute multiplicative combined loss.
 
@@ -307,8 +307,8 @@ def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
 
 
 def prepare_data(
-    nwp_path: Path,
-    obs_path: Path,
+    nwp_path: pathlib.Path,
+    obs_path: pathlib.Path,
     target_idx: int,
     is_0_84: bool = False,
 ) -> typing.Tuple[np.ndarray, np.ndarray]:
@@ -316,8 +316,8 @@ def prepare_data(
     Load and preprocess NWP and observation data for torch models.
 
     Args:
-        nwp_path: Path to NWP npy file.
-        obs_path: Path to observation npy file.
+        nwp_path: pathlib.Path to NWP npy file.
+        obs_path: pathlib.Path to observation npy file.
         target_idx: Index of the target variable in observation data.
         is_0_84: Whether to interpolate the 0-84 hour range.
 

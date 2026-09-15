@@ -4,17 +4,21 @@
 Plotting helpers for evaluation/access97_uv.py.
 
 Founded in 2026-07-22
-Modified in 2026-07-22
+Modified in 2026-09-15
 @author: yinlb
 """
 
-from pathlib import Path
+import pathlib
+import typing
 
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 from meteva import base as meb
+
+from access97_uv import Acc
+
 
 ELEMENT_NAME_LIST = [
     'T_2m', 'MSL', 'D_2m', 'U_10m', 'V_10m', 'T_1000hPa',
@@ -26,9 +30,9 @@ ELEMENT_NAME_LIST = [
 ]
 
 
-def _plot_mi_heatmap(mi: np.ndarray, fig_dir: Path) -> None:
+def _plot_mi_heatmap(mi: np.ndarray, fig_dir: pathlib.Path) -> None:
     """Plot the mutual-information heatmap."""
-    sns.heatmap(mi, cmap='binary', vmin=0, vmax=10, linewidths=0.3)
+    sns.heatmap(mi, cmap='Reds', vmin=0, vmax=10, linewidths=0.3)
     plt.xticks(np.arange(30), ELEMENT_NAME_LIST, rotation=45, fontsize=7)
     plt.yticks(np.arange(30) + 0.5, ELEMENT_NAME_LIST, rotation=0, fontsize=7)
     plt.tick_params(axis='x', which='both', bottom=False, top=False)
@@ -36,9 +40,18 @@ def _plot_mi_heatmap(mi: np.ndarray, fig_dir: Path) -> None:
     plt.savefig(fig_dir / 'mi.jpg', bbox_inches='tight', dpi=800)
     plt.cla()
     plt.close()
+    sns.heatmap(mi, cmap='binary', vmin=0, vmax=10, linewidths=0.3)
+    plt.xticks(np.arange(30), ELEMENT_NAME_LIST, rotation=45, fontsize=7)
+    plt.yticks(np.arange(30) + 0.5, ELEMENT_NAME_LIST, rotation=0, fontsize=7)
+    plt.tick_params(axis='x', which='both', bottom=False, top=False)
+    plt.tick_params(axis='y', which='both', left=False, right=False)
+    plt.savefig(fig_dir / 'mi2.jpg', bbox_inches='tight', dpi=800)
+    plt.cla()
+    plt.close()
+
 
 def _plot_grade_bars(
-    ts_grade: np.ndarray, wd_kappa_grade: np.ndarray, fig_dir: Path
+    ts_grade: np.ndarray, wd_kappa_grade: np.ndarray, fig_dir: pathlib.Path
 ) -> None:
     """Plot wind-speed grade and wind-direction kappa bar charts."""
     # 3. Plot wind-speed grade and wind-direction kappa bar charts.
@@ -163,8 +176,9 @@ def _plot_grade_bars(
     plt.savefig(fig_dir / 'wd_kappa_grade.jpg', bbox_inches='tight', dpi=800)
     plt.close()
 
+
 def _plot_yearly_rmse(
-    ws_rmse_year: np.ndarray, wd_rmse_year: np.ndarray, fig_dir: Path
+    ws_rmse_year: np.ndarray, wd_rmse_year: np.ndarray, fig_dir: pathlib.Path
 ) -> None:
     """Plot yearly RMSE bar charts."""
     plt.figure(figsize=(15, 5))
@@ -201,7 +215,7 @@ def _plot_yearly_rmse(
     plt.ylim((0, 1.6))
     plt.yticks((0, 0.4, 0.8, 1.2, 1.6))
     plt.xlabel('年份')
-    plt.ylabel('风速RMSE（m/s）')
+    plt.ylabel('风速RMSE (m/s)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'ws_rmse_year.jpg', bbox_inches='tight', dpi=800)
     plt.close()
@@ -240,13 +254,14 @@ def _plot_yearly_rmse(
     plt.ylim((0, 100))
     plt.yticks((0, 20, 40, 60, 80, 100))
     plt.xlabel('年份')
-    plt.ylabel('风向RMSE（°）')
+    plt.ylabel('风向RMSE (°)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'wd_rmse_year.jpg', bbox_inches='tight', dpi=800)
     plt.close()
 
+
 def _plot_monthly_rmse(
-    ws_rmse_month: np.ndarray, wd_rmse_month: np.ndarray, fig_dir: Path
+    ws_rmse_month: np.ndarray, wd_rmse_month: np.ndarray, fig_dir: pathlib.Path
 ) -> None:
     """Plot monthly RMSE bar charts."""
     plt.figure(figsize=(15, 5))
@@ -283,7 +298,7 @@ def _plot_monthly_rmse(
     plt.ylim((0, 1.6))
     plt.yticks((0, 0.4, 0.8, 1.2, 1.6))
     plt.xlabel('月份')
-    plt.ylabel('风速RMSE（m/s）')
+    plt.ylabel('风速RMSE (m/s)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'ws_rmse_month.jpg', bbox_inches='tight', dpi=800)
     plt.close()
@@ -322,15 +337,16 @@ def _plot_monthly_rmse(
     plt.ylim((0, 100))
     plt.yticks((0, 20, 40, 60, 80, 100))
     plt.xlabel('月份')
-    plt.ylabel('风向RMSE（°）')
+    plt.ylabel('风向RMSE (°)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'wd_rmse_month.jpg', bbox_inches='tight', dpi=800)
     plt.close()
-    print(np.nanmin(ws_rmse_month), np.nanmax(ws_rmse_month))
-    print(np.nanmin(wd_rmse_month), np.nanmax(wd_rmse_month))
+    print(f'逐月风速RMSE范围(全部模型): {np.nanmin(ws_rmse_month):.4f} ~ {np.nanmax(ws_rmse_month):.4f} m/s')
+    print(f'逐月风向RMSE范围(全部模型): {np.nanmin(wd_rmse_month):.2f} ~ {np.nanmax(wd_rmse_month):.2f} °')
+
 
 def _plot_leadtime_rmse(
-    ws_rmse_vt: np.ndarray, wd_rmse_vt: np.ndarray, fig_dir: Path
+    ws_rmse_vt: np.ndarray, wd_rmse_vt: np.ndarray, fig_dir: pathlib.Path
 ) -> None:
     """Plot forecast-lead-time RMSE bar charts."""
     plt.figure(figsize=(15, 5))
@@ -366,8 +382,8 @@ def _plot_leadtime_rmse(
     plt.xticks(range(24), [str(idx + 1) for idx in range(24)])
     plt.ylim((0, 1.6))
     plt.yticks((0, 0.4, 0.8, 1.2, 1.6))
-    plt.xlabel('预报时效（h）')
-    plt.ylabel('风速RMSE（m/s）')
+    plt.xlabel('预报时效 (h)')
+    plt.ylabel('风速RMSE (m/s)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'ws_rmse_vt.jpg', bbox_inches='tight', dpi=800)
     plt.close()
@@ -405,16 +421,17 @@ def _plot_leadtime_rmse(
     plt.xticks(range(24), [str(idx + 1) for idx in range(24)])
     plt.ylim((0, 100))
     plt.yticks((0, 20, 40, 60, 80, 100))
-    plt.xlabel('预报时效（h）')
-    plt.ylabel('风向RMSE（°）')
+    plt.xlabel('预报时效 (h)')
+    plt.ylabel('风向RMSE (°)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'wd_rmse_vt.jpg', bbox_inches='tight', dpi=800)
     plt.close()
-    print(np.nanmin(ws_rmse_vt), np.nanmax(ws_rmse_vt))
-    print(np.nanmin(wd_rmse_vt), np.nanmax(wd_rmse_vt))
+    print(f'逐时效风速RMSE范围(全部模型): {np.nanmin(ws_rmse_vt):.4f} ~ {np.nanmax(ws_rmse_vt):.4f} m/s')
+    print(f'逐时效风向RMSE范围(全部模型): {np.nanmin(wd_rmse_vt):.2f} ~ {np.nanmax(wd_rmse_vt):.2f} °')
+
 
 def _plot_forecast_hour_rmse(
-    ws_rmse_fhour: np.ndarray, wd_rmse_fhour: np.ndarray, fig_dir: Path
+    ws_rmse_fhour: np.ndarray, wd_rmse_fhour: np.ndarray, fig_dir: pathlib.Path
 ) -> None:
     """Plot forecast-hour-of-day RMSE bar charts."""
     plt.figure(figsize=(15, 5))
@@ -450,8 +467,8 @@ def _plot_forecast_hour_rmse(
     plt.xticks(range(24), [f'{idx}:00' for idx in range(24)])
     plt.ylim((0, 1.6))
     plt.yticks((0, 0.4, 0.8, 1.2, 1.6))
-    plt.xlabel('预报时间（UTC）')
-    plt.ylabel('风速RMSE（m/s）')
+    plt.xlabel('预报时间 (UTC)')
+    plt.ylabel('风速RMSE (m/s)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'ws_rmse_fhour.jpg', bbox_inches='tight', dpi=800)
     plt.close()
@@ -489,18 +506,19 @@ def _plot_forecast_hour_rmse(
     plt.xticks(range(24), [f'{idx}:00' for idx in range(24)])
     plt.ylim((0, 100))
     plt.yticks((0, 20, 40, 60, 80, 100))
-    plt.xlabel('预报时间（UTC）')
-    plt.ylabel('风向RMSE（°）')
+    plt.xlabel('预报时间 (UTC)')
+    plt.ylabel('风向RMSE (°)')
     plt.legend(loc='upper center', ncols=4)
     plt.savefig(fig_dir / 'wd_rmse_fhour.jpg', bbox_inches='tight', dpi=800)
     plt.close()
-    print(np.nanmin(ws_rmse_fhour), np.nanmax(ws_rmse_fhour))
-    print(np.nanmin(wd_rmse_fhour), np.nanmax(wd_rmse_fhour))
+    print(f'逐时次风速RMSE范围(全部模型): {np.nanmin(ws_rmse_fhour):.4f} ~ {np.nanmax(ws_rmse_fhour):.4f} m/s')
+    print(f'逐时次风向RMSE范围(全部模型): {np.nanmin(wd_rmse_fhour):.2f} ~ {np.nanmax(wd_rmse_fhour):.2f} °')
+
 
 def _analyze_stations(
     ob2: np.ndarray, ec2: np.ndarray, pdfm2: np.ndarray,
     mlr2: np.ndarray, lgb2: np.ndarray,
-    station_csv: Path, fig_dir: Path
+    station_csv: pathlib.Path, fig_dir: pathlib.Path
 ):
     """Compute station-level RMSE and draw violin plots."""
     # 5. Station-based analysis and violin plots.
@@ -512,6 +530,7 @@ def _analyze_stations(
     sta = station_information.loc[:, ('台站号', '经度', '纬度')]
     sta = meb.sta_data(sta, columns=['id', 'lon', 'lat'])
     sta.loc[:, 'level'] = 0
+    sta = sta.astype({'time': 'datetime64[ns]'})
     sta.loc[:, 'time'] = '2024-01-01 08:00:00'
     sta.loc[:, 'dtime'] = 0
     ws_rmse_sta = np.zeros((4, 97), dtype=np.float32) + np.nan
@@ -567,11 +586,11 @@ def _analyze_stations(
         palette=['blue', 'green', 'yellow', 'red']
     )
     plt.xlabel('模型')
-    plt.ylabel('风速RMSE（m/s）')
+    plt.ylabel('风速RMSE (m/s)')
     plt.savefig(fig_dir / 'ws_rmse_boxplot.jpg', bbox_inches='tight', dpi=800)
     plt.close()
-    print('ws_rmse')
-    print(np.median(ws_rmse_sta, axis=1))
+    print('分站点风速RMSE中位数(m/s) [ECMWF-IFS, PDFM, MOS, LightGBM]:')
+    print(np.round(np.median(ws_rmse_sta, axis=1), 4))
 
     plt.figure(figsize=(5, 5))
     sns.violinplot(
@@ -584,11 +603,11 @@ def _analyze_stations(
         palette=['blue', 'green', 'yellow', 'red']
     )
     plt.xlabel('模型')
-    plt.ylabel('风向RMSE（°）')
+    plt.ylabel('风向RMSE (°)')
     plt.savefig(fig_dir / 'wd_rmse_boxplot.jpg', bbox_inches='tight', dpi=800)
     plt.close()
-    print('wd_rmse')
-    print(np.median(wd_rmse_sta, axis=1))
+    print('分站点风向RMSE中位数(°) [ECMWF-IFS, PDFM, MOS, LightGBM]:')
+    print(np.round(np.median(wd_rmse_sta, axis=1), 2))
 
     plt.figure(figsize=(5, 5))
     sns.violinplot(
@@ -600,14 +619,14 @@ def _analyze_stations(
         palette=['green', 'yellow', 'red']
     )
     plt.xlabel('模型')
-    plt.ylabel('风速RMSE改善率（%）')
+    plt.ylabel('风速RMSE改善率 (%)')
     plt.savefig(
         fig_dir / 'ws_rmse_improvement_boxplot.jpg',
         bbox_inches='tight', dpi=800
     )
     plt.close()
-    print('ws_rmse_improvement')
-    print(np.median(ws_rmse_impr_sta, axis=1))
+    print('分站点风速RMSE改善率中位数(%) [PDFM, MOS, LightGBM]:')
+    print(np.round(np.median(ws_rmse_impr_sta, axis=1), 2))
 
     plt.figure(figsize=(5, 5))
     sns.violinplot(
@@ -619,16 +638,17 @@ def _analyze_stations(
         palette=['green', 'yellow', 'red']
     )
     plt.xlabel('模型')
-    plt.ylabel('风向RMSE改善率（%）')
+    plt.ylabel('风向RMSE改善率 (%)')
     plt.savefig(
         fig_dir / 'wd_rmse_improvement_boxplot.jpg',
         bbox_inches='tight', dpi=800
     )
     plt.close()
-    print('wd_rmse_improvement')
-    print(np.median(wd_rmse_impr_sta, axis=1))
+    print('分站点风向RMSE改善率中位数(%) [PDFM, MOS, LightGBM]:')
+    print(np.round(np.median(wd_rmse_impr_sta, axis=1), 2))
 
-def _plot_radar(ws_rmse_wd: np.ndarray, wd_rmse_wd: np.ndarray, fig_dir: Path):
+
+def _plot_radar(ws_rmse_wd: np.ndarray, wd_rmse_wd: np.ndarray, fig_dir: pathlib.Path):
     """Plot radar charts for RMSE by wind direction."""
     # 6. Radar plots by wind direction.
     ws_rmse_impr_wd = np.zeros((3, 9), dtype=np.float32) + np.nan
@@ -663,7 +683,7 @@ def _plot_radar(ws_rmse_wd: np.ndarray, wd_rmse_wd: np.ndarray, fig_dir: Path):
     ax.set_xticks(angles[:-1], labels)
     ax.set_rgrids((0, 0.5, 1, 1.5, 2), angle=90)
     plt.savefig(fig_dir / 'radar_ws_rmse.jpg', bbox_inches='tight', dpi=800)
-    print(np.nanmax(ws_rmse_wd))
+    print(f'分风向风速RMSE最大: {np.nanmax(ws_rmse_wd):.4f} m/s')
     plt.close()
 
     fig = plt.figure(figsize=(15, 5))
@@ -675,7 +695,7 @@ def _plot_radar(ws_rmse_wd: np.ndarray, wd_rmse_wd: np.ndarray, fig_dir: Path):
     ax.set_xticks(angles[:-1], labels)
     ax.set_rgrids((0, 25, 50, 75, 100), angle=90)
     plt.savefig(fig_dir / 'radar_wd_rmse.jpg', bbox_inches='tight', dpi=800)
-    print(np.nanmax(wd_rmse_wd))
+    print(f'分风向风向RMSE最大: {np.nanmax(wd_rmse_wd):.2f} °')
     plt.close()
 
     fig = plt.figure(figsize=(15, 5))
@@ -689,7 +709,7 @@ def _plot_radar(ws_rmse_wd: np.ndarray, wd_rmse_wd: np.ndarray, fig_dir: Path):
         fig_dir / 'radar_ws_improvement_rmse.jpg',
         bbox_inches='tight', dpi=800
     )
-    print(np.nanmin(ws_rmse_impr_wd), np.nanmax(ws_rmse_impr_wd))
+    print(f'分风向风速RMSE改善率: {np.nanmin(ws_rmse_impr_wd):.2f}%~{np.nanmax(ws_rmse_impr_wd):.2f}%')
     plt.close()
 
     fig = plt.figure(figsize=(15, 5))
@@ -703,18 +723,17 @@ def _plot_radar(ws_rmse_wd: np.ndarray, wd_rmse_wd: np.ndarray, fig_dir: Path):
         fig_dir / 'radar_wd_improvement_rmse.jpg',
         bbox_inches='tight', dpi=800
     )
-    print(np.nanmin(wd_rmse_impr_wd), np.nanmax(wd_rmse_impr_wd))
+    print(f'分风向风向RMSE改善率: {np.nanmin(wd_rmse_impr_wd):.2f}%~{np.nanmax(wd_rmse_impr_wd):.2f}%')
     plt.close()
+
 
 def _compare_lgb_variants(
     ob2: np.ndarray,
-    path_97: Path,
-    path_97uv: Path,
+    path_97: pathlib.Path,
+    path_97uv: pathlib.Path,
     years: typing.List[int],
 ) -> None:
     """Compare the four LightGBM training variants."""
-    from evaluation.access97_uv import Acc
-
     lgb11 = list()
     lgb22 = list()
     lgb33 = list()
@@ -742,10 +761,10 @@ def _compare_lgb_variants(
     lgb_2 = np.vstack(lgb_2)
     lgb_3 = np.vstack(lgb_3)
     lgb_4 = np.vstack(lgb_4)
-    lgb_1[:, :, :, 1] = lgb11
-    lgb_2[:, :, :, 1] = lgb22
-    lgb_3[:, :, :, 1] = lgb33
-    lgb_4[:, :, :, 1] = lgb44
+    # lgb_1[:, :, :, 1] = lgb11
+    # lgb_2[:, :, :, 1] = lgb22
+    # lgb_3[:, :, :, 1] = lgb33
+    # lgb_4[:, :, :, 1] = lgb44
 
     variants = [
         ('LightGBM1', lgb_1),
@@ -754,16 +773,17 @@ def _compare_lgb_variants(
         ('LightGBM4', lgb_4),
     ]
     for name, pred in variants:
-        print(name)
+        print(f'----- {name} -----')
         acc = Acc(ob2, pred)
-        print(acc.get_ws_r())
-        print(acc.get_ws_mae())
-        print(acc.get_ws_rmse())
-        print(acc.get_ws_mre())
-        print(acc.get_ws_oa())
-        print(acc.get_ws_kappa())
-        print(acc.get_wd_mae())
-        print(acc.get_wd_rmse())
-        print(acc.get_wd_oa())
-        print(acc.get_wd_kappa())
-
+        print(f'  风速 ME    : {acc.get_ws_me():.4f} m/s')
+        print(f'  风速 CC     : {acc.get_ws_r():.4f}')
+        print(f'  风速 MAE   : {acc.get_ws_mae():.4f} m/s')
+        print(f'  风速 RMSE  : {acc.get_ws_rmse():.4f} m/s')
+        print(f'  风速 MRE   : {acc.get_ws_mre():.4f}')
+        print(f'  风速 OA    : {acc.get_ws_oa():.4f}')
+        print(f'  风速 kappa : {acc.get_ws_kappa():.4f}')
+        print(f'  风向 ME   : {acc.get_wd_me():.2f} °')
+        print(f'  风向 MAE   : {acc.get_wd_mae():.2f} °')
+        print(f'  风向 RMSE  : {acc.get_wd_rmse():.2f} °')
+        print(f'  风向 OA    : {acc.get_wd_oa():.4f}')
+        print(f'  风向 kappa : {acc.get_wd_kappa():.4f}')

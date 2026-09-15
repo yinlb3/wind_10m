@@ -10,8 +10,8 @@ Evaluation script for 97-station 10 m wind speed forecasts.
 
 import copy
 import os
+import pathlib
 import sys
-from pathlib import Path
 
 import arrow
 import numpy as np
@@ -366,7 +366,7 @@ class Acc:
 
 
 def _load_forecasts(
-    data_dir: Path,
+    data_dir: pathlib.Path,
     year_values: list,
 ) -> tuple:
     """
@@ -446,7 +446,7 @@ def _compute_ts_array(
 
 def _plot_ts_bars(
     ts: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Draw grouped bar charts of TS by wind grade.
@@ -484,7 +484,7 @@ def _plot_ts_bars(
 
 def _plot_cumulative_ts_bars(
     ts: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Draw grouped bar charts of cumulative TS by threshold.
@@ -528,7 +528,7 @@ def _build_time_indices(
     Build year, month, and forecast hour indices for grouping samples.
 
     Args:
-        year_values: List of years in the dataset.
+        year_values: typing.List of years in the dataset.
 
     Returns:
         Tuple of (year_ind, month_ind, fhour_ind) arrays.
@@ -599,7 +599,7 @@ def _evaluate_by_year(
     lgb: np.ndarray,
     year_ind: np.ndarray,
     year_values: list,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Compute and plot RMSE improvement by year.
@@ -641,7 +641,7 @@ def _evaluate_by_month(
     mlr: np.ndarray,
     lgb: np.ndarray,
     month_ind: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Compute and plot RMSE improvement by month.
@@ -680,7 +680,7 @@ def _evaluate_by_lead_time(
     pdfm: np.ndarray,
     mlr: np.ndarray,
     lgb: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Compute and plot RMSE improvement by lead time.
@@ -719,7 +719,7 @@ def _evaluate_by_forecast_hour(
     mlr: np.ndarray,
     lgb: np.ndarray,
     fhour_ind: np.ndarray,
-    figure_dir: Path,
+    figure_dir: pathlib.Path,
 ) -> None:
     """
     Compute and plot RMSE improvement by forecast hour.
@@ -758,8 +758,8 @@ def _evaluate_by_station(
     pdfm: np.ndarray,
     mlr: np.ndarray,
     lgb: np.ndarray,
-    station_csv: Path,
-    figure_dir: Path,
+    station_csv: pathlib.Path,
+    figure_dir: pathlib.Path,
     n_stations: int,
 ) -> np.ndarray:
     """
@@ -771,7 +771,7 @@ def _evaluate_by_station(
         pdfm: PDFM forecast array.
         mlr: MLR forecast array.
         lgb: LightGBM forecast array.
-        station_csv: Path to station metadata CSV.
+        station_csv: pathlib.Path to station metadata CSV.
         figure_dir: Directory to save figures.
         n_stations: Number of stations.
 
@@ -832,9 +832,9 @@ def main() -> None:
         None
     """
     cfg = utils.load_config()
-    data_dir = Path(cfg['paths']['project_wind']) / '97'
-    figure_dir = Path(cfg['paths']['figure_dir'])
-    station_csv = Path(cfg['paths']['station_csv'])
+    data_dir = pathlib.Path(cfg['paths']['project_wind']) / '97'
+    figure_dir = pathlib.Path(cfg['paths']['figure_dir'])
+    station_csv = pathlib.Path(cfg['paths']['station_csv'])
     year_values = cfg['constants']['years']
     os.makedirs(figure_dir, exist_ok=True)
 

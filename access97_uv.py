@@ -15,9 +15,9 @@ Modified in 2026-09-15
 
 import os
 import copy
+import pathlib
 import sys
 import typing
-from pathlib import Path
 
 import arrow
 import numpy as np
@@ -137,7 +137,7 @@ class Acc:
 
     def _get_wd_delta(
         self, wd_grade: typing.Optional[int] = None
-    ) -> np.ndarray:
+   ) -> np.ndarray:
         """
         Compute wind-direction error array after circular adjustment.
 
@@ -165,7 +165,7 @@ class Acc:
 
     def get_wd_me(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute mean wind-direction error.
 
@@ -184,7 +184,7 @@ class Acc:
 
     def get_wd_mae(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute mean absolute wind-direction error.
 
@@ -203,7 +203,7 @@ class Acc:
 
     def get_wd_rmse(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute root-mean-square wind-direction error.
 
@@ -222,7 +222,7 @@ class Acc:
 
     def get_wd_cs(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute mean cosine of wind-direction error.
 
@@ -237,7 +237,7 @@ class Acc:
             AssertionError: If wd_grade is not None or an integer 0-7.
         """
         delta = self._get_wd_delta(wd_grade)
-        return float(np.mean(np.cos(delta)))
+        return float(np.mean(np.cos(np.deg2rad(delta))))
 
     def get_wd_cm(self) -> np.ndarray:
         """
@@ -250,7 +250,7 @@ class Acc:
 
     def get_wd_oa(
         self, is_ws: bool = False
-    ) -> typing.Union[float, np.ndarray]:
+   ) -> typing.Union[float, np.ndarray]:
         """
         Compute overall accuracy (OA) for wind-direction grades.
 
@@ -279,7 +279,7 @@ class Acc:
 
     def get_wd_kappa(
         self, is_ws: bool = False
-    ) -> typing.Union[float, np.ndarray]:
+   ) -> typing.Union[float, np.ndarray]:
         """
         Compute Cohen's kappa for wind-direction grades.
 
@@ -328,7 +328,7 @@ class Acc:
 
     def get_ws_mae(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute mean absolute wind-speed error.
 
@@ -352,7 +352,7 @@ class Acc:
 
     def get_ws_rmse(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute root-mean-square wind-speed error.
 
@@ -376,7 +376,7 @@ class Acc:
 
     def get_ws_mre(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute mean relative wind-speed error.
 
@@ -400,7 +400,7 @@ class Acc:
 
     def get_ws_r(
         self, wd_grade: typing.Optional[int] = None
-    ) -> float:
+   ) -> float:
         """
         Compute Pearson correlation of wind speed.
 
@@ -581,19 +581,19 @@ class Acc:
 def _load_data(
     cfg: typing.Dict[str, typing.Any]
 ) -> typing.Tuple[
-    typing.List[int], Path, Path, Path, Path,
+    typing.List[int], pathlib.Path, pathlib.Path, pathlib.Path, pathlib.Path,
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
 ]:
     """Load observations and predictions for the four main models."""
     # 1. Load configuration and data.
     cfg = utils.load_config()
     years = cfg['constants']['years']
-    base_path = Path(cfg['paths']['project_wind'])
+    base_path = pathlib.Path(cfg['paths']['project_wind'])
     path_97 = base_path / '97'
     path_97uv = base_path / '97-uv'
     fig_dir = path_97uv / '图'
     os.makedirs(fig_dir, exist_ok=True)
-    station_csv = Path(cfg['paths']['station_csv'])
+    station_csv = pathlib.Path(cfg['paths']['station_csv'])
 
     # 1.1 Load 97-station wind-speed data and inject into UV arrays.
     ob = list()
@@ -629,11 +629,11 @@ def _load_data(
     pdfm2 = np.vstack(pdfm2)
     mlr2 = np.vstack(mlr2)
     lgb2 = np.vstack(lgb2)
-    ob2[:, :, :, 1] = ob
-    ec2[:, :, :, 1] = ec
-    pdfm2[:, :, :, 1] = pdfm
-    mlr2[:, :, :, 1] = mlr
-    lgb2[:, :, :, 1] = lgb
+    # ob2[:, :, :, 1] = ob
+    # ec2[:, :, :, 1] = ec
+    # pdfm2[:, :, :, 1] = pdfm
+    # mlr2[:, :, :, 1] = mlr
+    # lgb2[:, :, :, 1] = lgb
 
     return (
         years, path_97, path_97uv, fig_dir, station_csv,
@@ -659,21 +659,23 @@ def _compute_overall_scores(
         ('LightGBM', lgb2),
     ]
     for idx, (name, pred) in enumerate(models):
-        print(name)
+        print(f'----- {name} -----')
         acc = Acc(ob2, pred)
-        print(acc.get_ws_r())
-        print(acc.get_ws_mae())
-        print(acc.get_ws_rmse())
-        print(acc.get_ws_mre())
-        print(acc.get_ws_oa())
-        print(acc.get_ws_kappa())
+        print(f'  风速 ME    : {acc.get_ws_me():.4f} m/s')
+        print(f'  风速 CC     : {acc.get_ws_r():.4f}')
+        print(f'  风速 MAE   : {acc.get_ws_mae():.4f} m/s')
+        print(f'  风速 RMSE  : {acc.get_ws_rmse():.4f} m/s')
+        print(f'  风速 MRE   : {acc.get_ws_mre():.4f}')
+        print(f'  风速 OA    : {acc.get_ws_oa():.4f}')
+        print(f'  风速 kappa : {acc.get_ws_kappa():.4f}')
         ts_grade[0, idx, :] = acc.get_ws_ts()[1:]
         ts_grade[1, idx, :] = acc.get_ws_ts2()
         wd_kappa_grade[idx, :] = acc.get_wd_kappa(True)
-        print(acc.get_wd_mae())
-        print(acc.get_wd_rmse())
-        print(acc.get_wd_oa())
-        print(acc.get_wd_kappa())
+        print(f'  风向 ME   : {acc.get_wd_me():.2f} °')
+        print(f'  风向 MAE   : {acc.get_wd_mae():.2f} °')
+        print(f'  风向 RMSE  : {acc.get_wd_rmse():.2f} °')
+        print(f'  风向 OA    : {acc.get_wd_oa():.4f}')
+        print(f'  风向 kappa : {acc.get_wd_kappa():.4f}')
         for i, j in enumerate([2, 1, 0, 7, 6, 5, 4, 3, 2]):
             wd_rmse_wd[idx, i] = acc.get_wd_rmse(wd_grade=j)
             ws_rmse_wd[idx, i] = acc.get_ws_rmse(wd_grade=j)
@@ -686,7 +688,7 @@ def _build_time_indices(
     """Build year, month, and forecast-hour indices for grouping."""
     # 4. Build time indices for year/month/forecast-hour grouping.
     n_cases = round(
-        (arrow.get(str(years[-1])) - arrow.get(str(years[0]))).total_seconds()
+        (arrow.get(str(years[-1] + 1)) - arrow.get(str(years[0]))).total_seconds()
         / 3600 / 12
     )
     year_ind = np.zeros(n_cases, np.int_) - 1
@@ -747,26 +749,14 @@ def _compute_monthly_rmse(
         acc = Acc(ob2[mask, :, :], lgb2[mask, :, :])
         ws_rmse_month[3, i] = acc.get_ws_rmse()
         wd_rmse_month[3, i] = acc.get_wd_rmse()
-    print(
-        'month, ws',
-        np.argmin(ws_rmse_month[3, :]),
-        np.min(ws_rmse_month[3, :])
-    )
-    print(
-        'month, ws',
-        np.argmax(ws_rmse_month[3, :]),
-        np.max(ws_rmse_month[3, :])
-    )
-    print(
-        'month, wd',
-        np.argmin(wd_rmse_month[3, :]),
-        np.min(wd_rmse_month[3, :])
-    )
-    print(
-        'month, wd',
-        np.argmax(wd_rmse_month[3, :]),
-        np.max(wd_rmse_month[3, :])
-    )
+    i = int(np.argmin(ws_rmse_month[3, :]))
+    print(f'LightGBM 逐月风速RMSE最小: {i + 1}月, {ws_rmse_month[3, i]:.4f} m/s')
+    i = int(np.argmax(ws_rmse_month[3, :]))
+    print(f'LightGBM 逐月风速RMSE最大: {i + 1}月, {ws_rmse_month[3, i]:.4f} m/s')
+    i = int(np.argmin(wd_rmse_month[3, :]))
+    print(f'LightGBM 逐月风向RMSE最小: {i + 1}月, {wd_rmse_month[3, i]:.2f} °')
+    i = int(np.argmax(wd_rmse_month[3, :]))
+    print(f'LightGBM 逐月风向RMSE最大: {i + 1}月, {wd_rmse_month[3, i]:.2f} °')
     return ws_rmse_month, wd_rmse_month
 
 
@@ -816,30 +806,15 @@ def _compute_forecast_hour_rmse(
         acc = Acc(ob2[mask], lgb2[mask])
         ws_rmse_fhour[3, i] = acc.get_ws_rmse()
         wd_rmse_fhour[3, i] = acc.get_wd_rmse()
-    print(
-        'fhour, ws',
-        np.argmin(ws_rmse_fhour[3, :]),
-        np.min(ws_rmse_fhour[3, :])
-    )
-    print(
-        'fhour, ws',
-        np.argmax(ws_rmse_fhour[3, :]),
-        np.max(ws_rmse_fhour[3, :])
-    )
-    print(
-        'fhour, wd',
-        np.argmin(wd_rmse_fhour[3, :]),
-        np.min(wd_rmse_fhour[3, :])
-    )
-    print(
-        'fhour, wd',
-        np.argmax(wd_rmse_fhour[3, :]),
-        np.max(wd_rmse_fhour[3, :])
-    )
+    i = int(np.argmin(ws_rmse_fhour[3, :]))
+    print(f'LightGBM 逐时次风速RMSE最小: {i}时, {ws_rmse_fhour[3, i]:.4f} m/s')
+    i = int(np.argmax(ws_rmse_fhour[3, :]))
+    print(f'LightGBM 逐时次风速RMSE最大: {i}时, {ws_rmse_fhour[3, i]:.4f} m/s')
+    i = int(np.argmin(wd_rmse_fhour[3, :]))
+    print(f'LightGBM 逐时次风向RMSE最小: {i}时, {wd_rmse_fhour[3, i]:.2f} °')
+    i = int(np.argmax(wd_rmse_fhour[3, :]))
+    print(f'LightGBM 逐时次风向RMSE最大: {i}时, {wd_rmse_fhour[3, i]:.2f} °')
     return ws_rmse_fhour, wd_rmse_fhour
-
-
-
 
 
 def main() -> None:

@@ -15,9 +15,9 @@ Modified in 2026-09-15
 import copy
 import math
 import os
+import pathlib
 import sys
 import typing
-from pathlib import Path
 
 import arrow
 import numpy as np
@@ -43,7 +43,7 @@ class PositionalEncoding(nn.Module):
         dropout: float = 0.1,
         max_len: int = 5000,
         device: typing.Union[int, str, None] = None,
-    ) -> None:
+   ) -> None:
         """
         Initialize PositionalEncoding.
 
@@ -89,7 +89,7 @@ class TransformerModel(nn.Transformer):
         nlayers: int = 6,
         dropout: float = 0.5,
         device: typing.Union[int, str, None] = None,
-    ) -> None:
+   ) -> None:
         """
         Initialize TransformerModel.
 
@@ -210,12 +210,12 @@ def _build_valid_mask(
 
 
 def _train_one_target(
-    data_dir: Path,
+    data_dir: pathlib.Path,
     train_years: typing.List[int],
     val_year: int,
     target_idx: int,
     thres: typing.Tuple[float, ...],
-    output_dir: Path,
+    output_dir: pathlib.Path,
 ) -> None:
     """
     Train a Transformer model for one target variable and save predictions.
@@ -304,8 +304,8 @@ def _train_one_target(
 
 
 def main(
-    data_dir: Path,
-    output_dir: Path,
+    data_dir: pathlib.Path,
+    output_dir: pathlib.Path,
     train_years: typing.List[int],
     val_year: int,
 ) -> None:
@@ -335,15 +335,15 @@ if __name__ == '__main__':
         paths = cfg['paths']
         years = cfg['constants']['years']
         main(
-            data_dir=Path(paths['wind_data']),
-            output_dir=Path(paths['wind2_model']) / 'transformer',
+            data_dir=pathlib.Path(paths['wind_data']),
+            output_dir=pathlib.Path(paths['wind2_model']) / 'transformer',
             train_years=years[:-1],
             val_year=years[-1],
         )
     elif len(sys.argv) == 5:
         main(
-            data_dir=Path(sys.argv[1]),
-            output_dir=Path(sys.argv[2]),
+            data_dir=pathlib.Path(sys.argv[1]),
+            output_dir=pathlib.Path(sys.argv[2]),
             train_years=[int(year) for year in sys.argv[3].split(',')],
             val_year=int(sys.argv[4]),
         )

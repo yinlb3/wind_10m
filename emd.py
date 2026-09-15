@@ -7,7 +7,7 @@ EMD demo script.
 Demonstrates Empirical Mode Decomposition on a sample time series.
 
 Founded in 2023-07
-Modified in 2026-07-21
+Modified in 2026-09-15
 @author: yinlb
 """
 

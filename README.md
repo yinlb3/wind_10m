@@ -62,7 +62,7 @@ python access97_uv.py
 
 ### Configuration
 
-Paths are managed through `config/config.yaml` and local override files:
+pathlib.Paths are managed through `config/config.yaml` and local override files:
 
 - `config/config.yaml` - shared constants and path placeholders
 - `config/config.local.windows.yaml` - Windows-specific paths

@@ -38,7 +38,7 @@ pip install torch
 # 1. 将 EC 预报数据提取到站点
 python extract_ec.py
 
-# 1b.（仅用于新原始观测数据）将分站 CSV 转换为 ob{year}.npy
+# 1b. (仅用于新原始观测数据) 将分站 CSV 转换为 ob{year}.npy
 python extract_obs.py
 
 # 2. 将 CSV 文件转换为 npy 数组
@@ -85,9 +85,9 @@ wind_10m/
 ├── pdfm.py / pdfm_uv.py     # PDF 匹配后处理模型
 ├── avt.py, cnn.py, dnn.py, emd.py, gn.py, ots.py, transformer.py
 │                            # PyTorch 演示模型
-├── access.py                # 评估（旧站集）
-├── access97.py              # 评估（97 站）
-├── access97_uv.py           # 评估（97 站，UV 分量）
+├── access.py                # 评估 (旧站集) 
+├── access97.py              # 评估 (97 站) 
+├── access97_uv.py           # 评估 (97 站，UV 分量) 
 ├── models/                  # 可复用模型模块
 │   └── base_torch.py        # torch 训练共享工具
 ├── evaluation/              # 可复用绘图模块

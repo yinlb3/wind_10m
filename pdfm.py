@@ -6,6 +6,7 @@ Founded in 2024-08-18
 Modified in 2026-09-15
 @author: yinlb
 """
+
 import copy
 import os
 import pathlib
@@ -87,7 +88,7 @@ class PDF:
             if self._table[right, 1] == self._table[left, 1]:
                 corrected[i] = (
                     self._table[right, 0] + self._table[left, 0]
-                ) / 2
+               ) / 2
             else:
                 slope = (
                     (self._table[right, 0] - self._table[left, 0])
@@ -190,7 +191,7 @@ def uv_to_ds(uv: np.ndarray) -> np.ndarray:
     )
     ds[:, :, :, 0] = 180 + np.arctan2(
         uv[:, :, :, 0], uv[:, :, :, 1]
-    ) * 180 / np.pi
+   ) * 180 / np.pi
     return ds
 
 

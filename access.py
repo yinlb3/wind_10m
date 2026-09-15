@@ -9,9 +9,9 @@ Modified in 2026-09-15
 
 import datetime
 import os
+import pathlib
 import sys
 import typing
-from pathlib import Path
 
 import arrow
 import numpy as np
@@ -84,17 +84,17 @@ def _load_forecasts(
     lgb_list = list()
     nwp_list = list()
     for year in years:
-        year_data = np.load(str(Path(input_path) / f'ob_{year:d}.npy'))
+        year_data = np.load(str(pathlib.Path(input_path) / f'ob_{year:d}.npy'))
         if len(year_data.shape) == 4:
             year_data = year_data[:, :, :, 1]
         obs_list.append(year_data)
 
-        year_data = np.load(str(Path(input_path) / f'lgb_{year:d}.npy'))
+        year_data = np.load(str(pathlib.Path(input_path) / f'lgb_{year:d}.npy'))
         if len(year_data.shape) == 4:
             year_data = year_data[:, :, :, 1]
         lgb_list.append(year_data)
 
-        year_data = np.load(str(Path(input_path) / f'nwp_{year:d}.npy'))
+        year_data = np.load(str(pathlib.Path(input_path) / f'nwp_{year:d}.npy'))
         if len(year_data.shape) == 4:
             year_data = year_data[:, :, :, 1]
         nwp_list.append(year_data)
@@ -272,7 +272,7 @@ def _plot_metric_bars(
         plt.title(metric)
         plt.legend()
         plt.savefig(
-            str(Path(output_path) / f'{prefix}_{metric.lower()}.png'),
+            str(pathlib.Path(output_path) / f'{prefix}_{metric.lower()}.png'),
             dpi=300,
         )
         plt.cla()
@@ -311,7 +311,7 @@ def _evaluate_by_lead_time(
         x_tick_start=11,
     )
     lead_time_df.to_csv(
-        str(Path(output_path) / '分时次.csv'),
+        str(pathlib.Path(output_path) / '分时次.csv'),
         encoding='gb2312',
         index=False,
     )
@@ -350,7 +350,7 @@ def _evaluate_by_month(
         x_tick_start=0,
     )
     monthly_df.to_csv(
-        str(Path(output_path) / '分月份.csv'),
+        str(pathlib.Path(output_path) / '分月份.csv'),
         encoding='gb2312',
         index=False,
     )
@@ -401,7 +401,7 @@ def _evaluate_by_grade(
         x_tick_start=0,
     )
     grade_df.to_csv(
-        str(Path(output_path) / '分量级.csv'),
+        str(pathlib.Path(output_path) / '分量级.csv'),
         encoding='gb2312',
         index=False,
     )
@@ -473,11 +473,11 @@ def _evaluate_by_station(
             value_column=0,
             map_extend=[108.65, 114.4, 24.5, 30.25],
             cmap=cmap,
-            save_path=str(Path(output_path) / filename),
+            save_path=str(pathlib.Path(output_path) / filename),
             dpi=300,
         )
     station_scores_df.to_csv(
-        str(Path(output_path) / '分站点.csv'),
+        str(pathlib.Path(output_path) / '分站点.csv'),
         encoding='gb2312',
         index=False,
     )
@@ -499,7 +499,7 @@ def main(
         input_path: Directory containing ob_<year>.npy, nwp_<year>.npy,
             and lgb_<year>.npy files.
         output_path: Directory where tables and figures will be saved.
-        station_info_path: Path to the CSV file with station metadata.
+        station_info_path: pathlib.Path to the CSV file with station metadata.
 
     Returns:
         None
@@ -544,9 +544,9 @@ if __name__ == '__main__':
     total_start = arrow.now()
 
     cfg = utils.load_config()
-    input_path = Path(cfg['paths']['wind5_model'])
-    output_path = Path(cfg['paths']['wind5_model']) / '图'
-    station_info_path = Path(cfg['paths']['station_csv'])
+    input_path = pathlib.Path(cfg['paths']['wind5_model'])
+    output_path = pathlib.Path(cfg['paths']['wind5_model']) / '图'
+    station_info_path = pathlib.Path(cfg['paths']['station_csv'])
     os.makedirs(str(output_path), exist_ok=True)
 
     if len(sys.argv) == 1:

@@ -13,9 +13,9 @@ Modified in 2026-09-15
 """
 
 import os
+import pathlib
 import sys
-from pathlib import Path
-from typing import List
+import typing
 
 import arrow
 import numpy as np
@@ -113,17 +113,17 @@ def main(
     nwp_data = np.zeros(
         (sample_count, N_LEAD_HOURS, station_count, len(ELEMENTS)),
         dtype=np.float32,
-    ) + np.nan
+   ) + np.nan
     # OBS: Observation
     obs_data = np.zeros(
         (sample_count, N_LEAD_HOURS, station_count, N_OBS_ELEMENTS),
         dtype=np.float32,
-    ) + np.nan
+   ) + np.nan
     print(f'Processing year {year}, sample_count = {sample_count}')
 
-    nwp_dir = Path(nwp_csv_path)
-    obs_dir = Path(obs_csv_path)
-    output_dir = Path(output_path)
+    nwp_dir = pathlib.Path(nwp_csv_path)
+    obs_dir = pathlib.Path(obs_csv_path)
+    output_dir = pathlib.Path(output_path)
     os.makedirs(output_dir, exist_ok=True)
 
     # ---- 2. Process EC forecast data (read CSV and save as npy) ----
@@ -180,7 +180,7 @@ if __name__ == '__main__':
     if len(sys.argv) == 1:
         cfg = utils.load_config()
         paths = cfg['paths']
-        years: List[int] = cfg['constants']['years']
+        years: typing.List[int] = cfg['constants']['years']
         for year in years:
             main(
                 nwp_csv_path=paths['ec_station'],

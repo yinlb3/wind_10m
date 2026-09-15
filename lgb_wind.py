@@ -170,7 +170,7 @@ def _train2(
         option: Aggregation option (1-4).
 
     Returns:
-        List of trained models or nested lists for option 4.
+        typing.List of trained models or nested lists for option 4.
     """
     models = list()
     n_samples, n_lead_times, n_stations, n_features = data.shape
@@ -243,7 +243,7 @@ def _test2(
     Predict using models trained with the specified option.
 
     Args:
-        models: List of trained models or nested lists for option 4.
+        models: typing.List of trained models or nested lists for option 4.
         data: Feature array with shape (samples, times, stations, features).
         option: Aggregation option (1-4).
 
@@ -254,7 +254,7 @@ def _test2(
     label = np.zeros(
         shape=(n_samples, n_lead_times, n_stations),
         dtype=data.dtype,
-    ) + np.nan
+   ) + np.nan
     if option == 1:
         label = _test(models[0], data)
     elif option == 2:
@@ -311,8 +311,8 @@ def main(
         input_path: Directory containing preprocessed NWP and obs .npy files.
         model_path: Directory for model checkpoints (reserved for future use).
         output_path: Directory where prediction files will be saved.
-        station_info_path: Path to the station information CSV.
-        years: List of years used for cross-validation.
+        station_info_path: pathlib.Path to the station information CSV.
+        years: typing.List of years used for cross-validation.
     """
     # 1. Ensure the output directory exists.
     os.makedirs(output_path, exist_ok=True)
@@ -373,7 +373,7 @@ def main(
                 n_lead_times,
                 n_stations,
                 n_features,
-            ) = train_x.shape
+           ) = train_x.shape
             n_test_samples = test_x.shape[0]
 
             models = _train2(train_x, train_label, j + 1)

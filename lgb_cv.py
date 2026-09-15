@@ -6,9 +6,10 @@ Founded in 2023-08-01
 Modified in 2026-09-15
 @author: yinlb
 """
+
 import pathlib
 import sys
-from typing import List
+import typing
 
 import arrow
 import lightgbm as lgb
@@ -131,14 +132,14 @@ def _uv_to_ds(wind_uv: np.ndarray) -> np.ndarray:
     return wind_ds
 
 
-def main(input_path: str, years: List[int]) -> None:
+def main(input_path: str, years: typing.List[int]) -> None:
     """
     Run LightGBM hyperparameter search with randomized CV.
 
     Args:
         input_path: Directory containing the .npy forecast
             and observation files.
-        years: List of years to load for training.
+        years: typing.List of years to load for training.
 
     Returns:
         None

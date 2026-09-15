@@ -6,6 +6,7 @@ Founded in 2023-07-18
 Modified in 2026-09-15
 @author: yinlb
 """
+
 import os
 import pathlib
 import sys
@@ -27,7 +28,7 @@ RANDOM_SEED = 20230718
 HOUR_BEGIN = 12
 HOUR_END = 36
 # LightGBM parallel thread count.
-LGB_N_JOBS = 20
+LGB_N_JOBS = -1
 # ====================================================
 
 
@@ -145,16 +146,17 @@ def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
     """
     ds = np.zeros_like(uv, dtype=np.float32) + np.nan
     no_wind = uv[:, :, :, 0] == 999017
-    wind_speed = np.sqrt(uv[no_wind, 0] ** 2 + uv[no_wind, 1] ** 2)
-    wind_speed[wind_speed >= 0.3] = 0.29
-    ds[no_wind, 1] = wind_speed
+    wind_speed = np.zeros_like(uv[:, :, :, 1])
+    wind_speed[no_wind] = uv[no_wind, 1]
+    wind_speed[~no_wind] = np.sqrt(uv[~no_wind, 0] ** 2 + uv[~no_wind, 1] ** 2)
+    no_wind[wind_speed < 0.3] = True
+    wind_speed[no_wind & (wind_speed[no_wind] >= 0.3)] = 0.29
+    wind_speed[~no_wind & (wind_speed[no_wind] < 0.3)] = 0.3
+    ds[:, 1] = wind_speed
     ds[no_wind, 0] = 999017
-    wind_speed = np.sqrt(uv[~no_wind, 0] ** 2 + uv[~no_wind, 1] ** 2)
-    wind_speed[wind_speed < 0.3] = 0.3
-    ds[~no_wind, 1] = wind_speed
     ds[~no_wind, 0] = 180 + np.arctan2(
         uv[~no_wind, 0], uv[~no_wind, 1]
-    ) * 180 / np.pi
+   ) * 180 / np.pi % 360
     return ds
 
 
@@ -170,7 +172,7 @@ def _train(
         model_name: Model type, either 'lgb' or 'mlr'.
 
     Returns:
-        List of two fitted models (U component, V component).
+        typing.List of two fitted models (U component, V component).
     """
     assert model_name in ('lgb', 'mlr')
     valid = ~np.isnan(label[:, :, :, 0])
@@ -231,22 +233,22 @@ def _train2(
         for i in range(n_hours):
             temp_data = np.reshape(
                 data[:, i, :, :],
-                newshape=(n_samples, 1, n_stations, n_features)
+                shape=(n_samples, 1, n_stations, n_features)
             )
             temp_label = np.reshape(
                 label[:, i, :, :],
-                newshape=(n_samples, 1, n_stations, 2)
+                shape=(n_samples, 1, n_stations, 2)
             )
             models.append(_train(temp_data, temp_label, model_name))
     elif option == 3:
         for i in range(n_stations):
             temp_data = np.reshape(
                 data[:, :, i, :],
-                newshape=(n_samples, n_hours, 1, n_features)
+                shape=(n_samples, n_hours, 1, n_features)
             )
             temp_label = np.reshape(
                 label[:, :, i, :],
-                newshape=(n_samples, n_hours, 1, 2)
+                shape=(n_samples, n_hours, 1, 2)
             )
             models.append(_train(temp_data, temp_label, model_name))
     elif option == 4:
@@ -255,11 +257,11 @@ def _train2(
             for j in range(n_stations):
                 temp_data = np.reshape(
                     data[:, i, j, :],
-                    newshape=(n_samples, 1, 1, n_features)
+                    shape=(n_samples, 1, 1, n_features)
                 )
                 temp_label = np.reshape(
                     label[:, i, j, :],
-                    newshape=(n_samples, 1, 1, 2)
+                    shape=(n_samples, 1, 1, 2)
                 )
                 models[i].append(_train(temp_data, temp_label, model_name))
     return models
@@ -270,7 +272,7 @@ def _test(models: typing.List, data: np.ndarray) -> np.ndarray:
     Predict U/V components using the trained models.
 
     Args:
-        models: List of two fitted models (U, V).
+        models: typing.List of two fitted models (U, V).
         data: Input features with the same shape used during training.
 
     Returns:
@@ -281,7 +283,7 @@ def _test(models: typing.List, data: np.ndarray) -> np.ndarray:
         valid &= ~np.isnan(data[..., i])
     prediction = np.zeros(
         list(data.shape[:-1]) + [2], dtype=np.float32
-    ) + np.nan
+   ) + np.nan
     features = data[valid, :]
     comp_u = models[0].predict(features)
     comp_v = models[1].predict(features)
@@ -307,7 +309,7 @@ def _test2(
     n_samples, n_hours, n_stations, n_features = data.shape
     prediction = np.zeros(
         (n_samples, n_hours, n_stations, 2), dtype=np.float32
-    ) + np.nan
+   ) + np.nan
     if option == 1:
         prediction = _test(models, data)
     elif option == 2:
@@ -338,7 +340,7 @@ def main(
         input_path: Directory containing NWP and observation .npy files.
         model_path: Reserved model directory (currently unused).
         output_path: Directory where output .npy files will be saved.
-        station_info_path: Path to the station information CSV file.
+        station_info_path: pathlib.Path to the station information CSV file.
 
     Returns:
         None.
@@ -391,6 +393,7 @@ def main(
             lgb[j + 1].append((arrow.now() - time_arrow).total_seconds() / 60)
             predict_uv = _test2(models, test_data, j + 1)
             predict_label = _uv_to_ds(predict_uv)
+            np.save(output_dir / f'lgb_{j + 1}_{year}_uv.npy', predict_uv)
             np.save(output_dir / f'lgb_{j + 1}_{year}.npy', predict_label)
             train_x = np.copy(train_data)
             test_x = np.copy(test_data)
@@ -410,10 +413,10 @@ def main(
                     )
                     train_x[:, k, :, :] = (
                         train_x[:, k, :, :] - data_mean
-                    ) / data_std
+                   ) / data_std
                     test_x[:, k, :, :] = (
                         test_x[:, k, :, :] - data_mean
-                    ) / data_std
+                   ) / data_std
             elif j == 2:
                 for k in range(n_stations):
                     data_mean = np.nanmean(
@@ -424,10 +427,10 @@ def main(
                     )
                     train_x[:, :, k, :] = (
                         train_x[:, :, k, :] - data_mean
-                    ) / data_std
+                   ) / data_std
                     test_x[:, :, k, :] = (
                         test_x[:, :, k, :] - data_mean
-                    ) / data_std
+                   ) / data_std
             elif j == 3:
                 for k in range(n_hours):
                     for sta_idx in range(n_stations):
@@ -439,14 +442,15 @@ def main(
                         )
                         train_x[:, k, sta_idx, :] = (
                             train_x[:, k, sta_idx, :] - data_mean
-                        ) / data_std
+                       ) / data_std
                         test_x[:, k, sta_idx, :] = (
                             test_x[:, k, sta_idx, :] - data_mean
-                        ) / data_std
+                       ) / data_std
             time_arrow = arrow.now()
             models = _train2(train_x, train_uv, j + 1, 'mlr')
             mlr[j + 1].append((arrow.now() - time_arrow).total_seconds() / 60)
             predict_uv = _test2(models, test_x, j + 1)
+            np.save(output_dir / f'mlr_{j + 1}_{year}_uv.npy', predict_uv)
             predict_label = _uv_to_ds(predict_uv)
             np.save(output_dir / f'mlr_{j + 1}_{year}.npy', predict_label)
         print(f'Training and prediction for {year} completed.')

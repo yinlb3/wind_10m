@@ -70,7 +70,7 @@ def load_config(local_name: typing.Optional[str] = None) -> dict:
         config_dir = pathlib.Path(__file__).parent.parent / 'config'
         with open(
             config_dir / 'config.yaml', 'r', encoding='utf-8'
-        ) as file_handle:
+       ) as file_handle:
             _CONFIG = yaml.safe_load(file_handle)
 
         # 2. Determine the local override:
@@ -93,7 +93,7 @@ def load_config(local_name: typing.Optional[str] = None) -> dict:
         if local_path.exists():
             with open(
                 local_path, 'r', encoding='utf-8'
-            ) as file_handle:
+           ) as file_handle:
                 local_cfg = yaml.safe_load(file_handle)
             _deep_merge(base=_CONFIG, override=local_cfg)
 

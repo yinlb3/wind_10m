@@ -3,9 +3,10 @@
 
 """
 Founded in 2024-08-18
-Modified in 2026-07-22
+Modified in 2026-09-15
 @author: yinlb
 """
+
 import copy
 import os
 import pathlib
@@ -214,7 +215,7 @@ def _uv_to_ds(wind_uv: np.ndarray) -> np.ndarray:
     wind[~no_wind, 1] = speed
     wind[~no_wind, 0] = 180 + np.arctan2(
         wind_uv[~no_wind, 0], wind_uv[~no_wind, 1]
-    ) * 180 / np.pi
+   ) * 180 / np.pi
     return wind
 
 

@@ -13,8 +13,8 @@ Modified in 2026-09-15
 """
 
 import os
+import pathlib
 import sys
-from pathlib import Path
 
 import arrow
 import numpy as np
@@ -91,8 +91,8 @@ def main(
     grid_high_res = meb.grid((70, 140, 0.125), (0, 60, 0.125))
     grid_standard_res = meb.grid((70, 140, 0.25), (0, 60, 0.25))
 
-    input_dir = Path(input_path)
-    output_dir = Path(output_path)
+    input_dir = pathlib.Path(input_path)
+    output_dir = pathlib.Path(output_path)
     os.makedirs(output_dir, exist_ok=True)
 
     # ---- 2. Iterate over forecast initial times and extract data ----

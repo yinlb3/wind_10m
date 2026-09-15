@@ -3,19 +3,19 @@
 Rename variables in Python source files using tokenize.
 
 Founded in 2026-07-22
-Modified in 2026-07-22
+Modified in 2026-09-15
 @author: yinlb
 """
 
+import pathlib
 import tokenize
-from pathlib import Path
 
 import arrow
 
 from src import utils
 
 
-def rename_in_file(path: Path, mapping: dict[str, str]) -> None:
+def rename_in_file(path: pathlib.Path, mapping: dict[str, str]) -> None:
     """Replace NAME tokens according to mapping; preserve line endings."""
     text = path.read_text(encoding='utf-8')
     lines = text.splitlines(keepends=True)
@@ -151,7 +151,7 @@ def main() -> None:
     }
 
     for rel_path, mapping in file_renames.items():
-        file_path = Path(rel_path)
+        file_path = pathlib.Path(rel_path)
         if file_path.exists():
             rename_in_file(file_path, mapping)
             print(f'renamed in {file_path}')
