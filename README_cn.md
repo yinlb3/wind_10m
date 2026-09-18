@@ -12,8 +12,8 @@
 - [安装](#安装)
 - [使用](#使用)
 - [项目结构](#项目结构)
-- [里程碑](#里程碑)
 - [许可证](#许可证)
+- [里程碑](#里程碑)
 - [作者](#作者)
 
 ## 安装
@@ -38,7 +38,10 @@ pip install torch
 # 1. 将 EC 预报数据提取到站点
 python extract_ec.py
 
-# 1b. (仅用于新原始观测数据) 将分站 CSV 转换为 ob{year}.npy
+# 1a.（可选）从 CMADaaS 下载分站观测 CSV
+python download_obs.py
+
+# 1b.（仅用于新原始观测数据）将分站 CSV 转换为 ob{year}.npy
 python extract_obs.py
 
 # 2. 将 CSV 文件转换为 npy 数组
@@ -58,6 +61,8 @@ python access.py
 python access97.py
 # 或
 python access97_uv.py
+# 或
+python access97_sc.py
 ```
 
 ### 配置
@@ -70,35 +75,47 @@ python access97_uv.py
 
 复制本地示例并填写本机的真实路径。这些本地文件会被 Git 忽略。
 
+若 `meb.read_station()` 报 micaps3 格式错误（pandas >= 2），修复方法参见 <https://github.com/nmcdev/meteva/issues/193>。
+
 ## 项目结构
 
 ```
 wind_10m/
 ├── config/                  # YAML 配置文件
+├── download_obs.py          # 从 CMADaaS 下载分站观测 CSV
 ├── extract_ec.py            # 将 EC 预报数据提取到站点
 ├── extract_obs.py           # 将分站原始观测 CSV 转换为 npy
 ├── convert_npy.py           # 将 CSV 文件转换为 npy 数组
 ├── lgb_uv.py                # LightGBM UV 分量训练
 ├── lgb_wind.py              # LightGBM 风速训练
 ├── lgb_cv.py                # LightGBM 交叉验证
+├── lgb_sc.py                # LightGBM SC 编码训练变体
 ├── lgb_predict.py           # LightGBM 预测
 ├── pdfm.py / pdfm_uv.py     # PDF 匹配后处理模型
 ├── avt.py, cnn.py, dnn.py, emd.py, gn.py, ots.py, transformer.py
 │                            # PyTorch 演示模型
-├── access.py                # 评估 (旧站集) 
-├── access97.py              # 评估 (97 站) 
-├── access97_uv.py           # 评估 (97 站，UV 分量) 
+├── access.py                # 评估 (旧站集)
+├── access97.py              # 评估 (97 站)
+├── access97_uv.py           # 评估 (97 站，UV 分量)
+├── access97_sc.py           # 评估 (97 站，SC 编码预报)
+├── rename_vars.py           # 重命名 Python 源码中的变量名
 ├── models/                  # 可复用模型模块
 │   └── base_torch.py        # torch 训练共享工具
 ├── evaluation/              # 可复用绘图模块
 │   ├── access97_plots.py
+│   ├── access97_sc_plots.py
 │   └── access97_uv_plots.py
 ├── src/                     # 共享工具模块
+│   ├── metrics.py           # 共享评估指标 (Acc 类)
 │   └── utils.py
 ├── README.md
 ├── README_cn.md
 └── AGENTS.md
 ```
+
+## 许可证
+
+这是一个内部研究项目，不提供公共许可证。
 
 ## 里程碑
 
@@ -110,6 +127,7 @@ wind_10m/
 | 文档规范化 | 将 `AGENTS.md` 和 `README.md` 重写为英文，创建 `README_cn.md` | 2026-07-21 |
 | 编码规范与演示模型正式化 | 正式化 torch 演示模型，全项目应用编码规范 | 2026-07-22 |
 | 新原始观测预处理 | 新增 `extract_obs.py`，将分站原始 CSV 直接转换为 `ob{year}.npy` 数组 | 2026-09-14 |
+| 文档清理 | 解决 `AGENTS.md`、`README.md`、`README_cn.md` 中残留的 Git 冲突标记，并使文件结构与命令与实际布局一致 | 2026-09-17 |
 
 ### 进行中
 
@@ -124,13 +142,10 @@ wind_10m/
 | 添加单元测试 | 为核心函数添加测试用例 | P3 |
 | 演示模型方案集成 | 重构演示模型以支持统一/分时效/分站点方案 | P2 |
 
-**最后更新**：2026-09-15
-**Last Updated**: 2026-09-15
-
-## 许可证
-
-这是一个内部研究项目，不提供公共许可证。
-
 ## 作者
 
-- **作者**：yinlb
+- **作者**：yinlb<yinlb3@foxmail.com>, deepseek-flash
+
+**最后更新**：2026-09-17
+
+**[English](README.md)**

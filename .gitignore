@@ -58,3 +58,15 @@ config/*.local.linux.yaml
 # Backup and temporary files
 *.bak
 _*.py
+!__*__.py
+
+# Tool and session data
+.kimi/
+.claude/
+
+# Local rule assets (not part of this project)
+rules/
+
+# Temporary folders
+temp/
+tmp/

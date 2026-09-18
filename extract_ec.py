@@ -1,6 +1,5 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 ECMWF-IFS data extraction module
 
@@ -8,13 +7,14 @@ Extract meteorological elements from EC4AI binary files to specified stations
 and output CSV format data.
 
 Founded in 2023-07-15
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
 import pathlib
 import sys
+import typing
 
 import arrow
 import numpy as np
@@ -45,36 +45,29 @@ ELEMENTS = (
 # Surface elements use the high-resolution 0.125-degree grid.
 N_SURFACE_ELEMENTS = 5
 
-# ==================== Parameters ====================
-# Forecast year range to extract: [YEAR_BEGIN, YEAR_END).
-YEAR_BEGIN = 2017
-YEAR_END = 2023
-# Forecast lead times to extract (hours): [BEGIN, END] with STEP.
-LEAD_TIME_BEGIN = 12
-LEAD_TIME_END = 36
-LEAD_TIME_STEP = 3
-# ====================================================
-
 
 def main(
     input_path: str,
     output_path: str,
     station_info_path: str,
+    years: typing.List[int],
+    forecast: typing.Dict[str, int],
 ) -> None:
     """
     Extract data from EC4AI to stations.
 
-    Iterate over the specified time range of EC forecast data,
-    extract 30 elements to 97 stations, and output CSV files.
+    Iterate over the configured year range of EC forecast data, extract
+    the configured elements to all stations, and output CSV files.
 
     Args:
         input_path: Root directory of EC4AI binary files.
         output_path: Output CSV file directory.
         station_info_path: Station information CSV file path
             (contains station ID, longitude, and latitude columns).
-
-    Returns:
-        None
+        years: Years to extract; the range covered is
+            [years[0], years[-1] + 1).
+        forecast: Lead-time configuration, requires the keys
+            'ec_start_hour', 'ec_end_hour' and 'ec_lead_step'.
     """
     # ---- 1. Read station information and define grids ----
     station_df = pd.read_csv(
@@ -96,13 +89,15 @@ def main(
     os.makedirs(output_dir, exist_ok=True)
 
     # ---- 2. Iterate over forecast initial times and extract data ----
-    time_begin = arrow.get(str(YEAR_BEGIN))
-    time_end = arrow.get(str(YEAR_END))
+    time_begin = arrow.get(str(years[0]))
+    time_end = arrow.get(str(years[-1] + 1))
     forecast_ref_time = time_begin
     while forecast_ref_time < time_end:
         year_month = forecast_ref_time.format('YYYYMM')
         for lead_time in range(
-            LEAD_TIME_BEGIN, LEAD_TIME_END + 1, LEAD_TIME_STEP
+            forecast['ec_start_hour'],
+            forecast['ec_end_hour'],
+            forecast['ec_lead_step'],
         ):
             init_time = forecast_ref_time.format('MMDDHH')
             valid_time = forecast_ref_time.shift(
@@ -157,12 +152,17 @@ if __name__ == '__main__':
             input_path=paths['ec4ai'],
             output_path=paths['ec_station'],
             station_info_path=paths['station_csv'],
+            years=cfg['constants']['years'],
+            forecast=cfg['forecast'],
         )
     elif len(sys.argv) == 4:
+        cfg = utils.load_config()
         main(
             input_path=sys.argv[1],
             output_path=sys.argv[2],
             station_info_path=sys.argv[3],
+            years=cfg['constants']['years'],
+            forecast=cfg['forecast'],
         )
 
     total_elapsed = (arrow.now() - total_start).total_seconds()

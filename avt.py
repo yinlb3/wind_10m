@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2024-08-20
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-18
+@author: yinlb, deepseek-flash
 """
 
 import copy
@@ -24,17 +23,30 @@ class AVT:
     Adjusts the forecast distribution to match the observed distribution by
     removing the forecast mean and standard deviation, then rescaling with the
     observed mean and standard deviation.
+
+    Attributes:
+        _ob_mean (float): Mean of the observed values, None before fit().
+        _ob_std (float): Standard deviation of the observed values, None
+            before fit().
+        _pr_mean (float): Mean of the forecast values, None before fit().
+        _pr_std (float): Standard deviation of the forecast values, None
+            before fit().
     """
 
     def __init__(self) -> None:
         """Initialize the AVT transformer with empty statistics."""
-        self.ob_mean = None
-        self.ob_std = None
-        self.pr_mean = None
-        self.pr_std = None
+        self._ob_mean = None
+        self._ob_std = None
+        self._pr_mean = None
+        self._pr_std = None
 
     def copy(self) -> 'AVT':
-        """Return a deep copy of the transformer."""
+        """
+        Return a deep copy of the transformer.
+
+        Returns:
+            AVT: Independent deep copy of this transformer.
+        """
         return copy.deepcopy(self)
 
     def fit(self, ob: np.ndarray, pr: np.ndarray) -> None:
@@ -45,10 +57,10 @@ class AVT:
             ob: Observed values.
             pr: Forecast values.
         """
-        self.ob_mean = np.nanmean(ob)
-        self.ob_std = np.nanstd(ob)
-        self.pr_mean = np.nanmean(pr)
-        self.pr_std = np.nanstd(pr)
+        self._ob_mean = np.nanmean(ob)
+        self._ob_std = np.nanstd(ob)
+        self._pr_mean = np.nanmean(pr)
+        self._pr_std = np.nanstd(pr)
 
     def predict(self, pr0: np.ndarray) -> np.ndarray:
         """
@@ -61,8 +73,8 @@ class AVT:
             Bias-corrected forecast values.
         """
         pr = (
-            (pr0 - self.pr_mean) / self.pr_std * self.ob_std
-            + self.ob_mean
+            (pr0 - self._pr_mean) / self._pr_std * self._ob_std
+            + self._ob_mean
         )
         return pr
 
@@ -81,6 +93,7 @@ def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
     # Do not mutate the caller's array (A6).
     data = data.copy()
     if is_0_84:
+        # 1. Interpolate the hour 0-24 range from 3-hourly values.
         for i in range(24):
             data[:, 3 * i + 1, :, :] = (
                 data[:, 3 * i, :, :] * 2 / 3
@@ -90,6 +103,8 @@ def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
                 data[:, 3 * i, :, :] / 3
                 + data[:, 3 * i + 3, :, :] * 2 / 3
             )
+
+        # 2. Fill the transition hours between hour 72 and hour 78.
         data[:, 73, :, :] = (
             data[:, 72, :, :] * 5 / 6
             + data[:, 78, :, :] / 6
@@ -110,6 +125,8 @@ def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
             data[:, 72, :, :] / 6
             + data[:, 78, :, :] * 5 / 6
         )
+
+        # 3. Fill the transition hours between hour 78 and hour 84.
         data[:, 79, :, :] = (
             data[:, 78, :, :] * 5 / 6
             + data[:, 84, :, :] / 6
@@ -154,13 +171,14 @@ def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
         Array with wind direction (degree) and speed (m/s) in the last
         dimension.
     """
+    # ds: direction/speed array (index 0 = direction, index 1 = speed)
     ds = np.zeros_like(uv, dtype=np.float32) + np.nan
     ds[:, :, :, 1] = np.sqrt(
         uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2
     )
     ds[:, :, :, 0] = 180 + np.arctan2(
         uv[:, :, :, 0], uv[:, :, :, 1]
-   ) * 180 / np.pi
+    ) * 180 / np.pi
     return ds
 
 
@@ -209,7 +227,8 @@ def main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         nwp_test_label = _uv_to_ds(
             test_data[:, :, :, 3:5]
         )[:, :, :, 1]
-        # Scheme 4: per lead-time and site AVT correction.
+
+        # 3. Scheme 4: per lead-time and site AVT correction.
         predict_label = np.zeros_like(nwp_test_label) + np.nan
         for j in range(24):
             for k in range(24):

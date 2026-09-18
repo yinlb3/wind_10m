@@ -1,10 +1,9 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2023-09-15
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
@@ -115,8 +114,8 @@ def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
 
     Used only for the NWP baseline. Calm wind samples are reconstructed
     from the U component marker, with the original speed recovered from
-    the V slot. Wind speeds below 0.3 m/s are clamped to 0.3 m/s for
-    non-calm samples.
+    the V slot. Wind speeds below 0.3 m/s are treated as calm wind, with
+    the direction set to the 999017 marker, consistent with lgb_uv.py.
 
     Args:
         uv: Array containing U/V components with trailing dimension size 2.
@@ -125,15 +124,24 @@ def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
         Wind direction/speed array.
     """
     ds = np.zeros_like(uv, dtype=np.float32) + np.nan
+    # Condition 1: calm-wind marker
     no_wind = uv[:, :, :, 0] == 999017
-    ds[no_wind, 1] = uv[no_wind, 1]
+    wind_speed = np.zeros_like(uv[:, :, :, 1])
+    wind_speed[no_wind] = uv[no_wind, 1]
+    wind_speed[~no_wind] = np.sqrt(
+        uv[~no_wind, 0] ** 2 + uv[~no_wind, 1] ** 2
+    )
+    # Condition 2: speed < 0.3 is treated as calm
+    no_wind |= wind_speed < 0.3
+    # Calm flag but speed >= 0.3: push back to grade 0
+    wind_speed[no_wind & (wind_speed >= 0.3)] = 0.29
+    # Defensive: empty set (cannot happen in practice)
+    wind_speed[~no_wind & (wind_speed < 0.3)] = 0.3
+    ds[:, :, :, 1] = wind_speed
     ds[no_wind, 0] = 999017
-    wind_speed = np.sqrt(uv[~no_wind, 0] ** 2 + uv[~no_wind, 1] ** 2)
-    wind_speed[wind_speed < 0.3] = 0.3
-    ds[~no_wind, 1] = wind_speed
     ds[~no_wind, 0] = 180 + np.arctan2(
         uv[~no_wind, 0], uv[~no_wind, 1]
-   ) * 180 / np.pi
+    ) * 180 / np.pi
     return ds
 
 
@@ -178,16 +186,19 @@ def _sc_to_ds(sc: np.ndarray) -> np.ndarray:
         Wind direction/speed array.
     """
     ds = np.zeros(list(sc.shape[:-1]) + [2], dtype=np.float32) + np.nan
-    no_wind = (sc[:, :, :, 0] == 999017) | (sc[:, :, :, 1] < 0.3)
-    wind_speed = np.zeros_like(sc[:, :, :, 1])
-    wind_speed[no_wind] = 0
-    wind_speed[~no_wind] = sc[~no_wind, 0]
-    wind_speed[~no_wind & (wind_speed[no_wind] < 0.3)] = 0.3
-    ds[:, 1] = wind_speed
+    # Condition 1: calm-wind marker
+    no_wind = sc[:, :, :, 0] == 999017
+    wind_speed = sc[:, :, :, 0].copy()
+    # Condition 2: speed stored in channel 0
+    no_wind |= wind_speed < 0.3
+    wind_speed[no_wind & (wind_speed >= 0.3)] = 0.29
+    # Defensive: empty set (cannot happen in practice)
+    wind_speed[~no_wind & (wind_speed < 0.3)] = 0.3
+    ds[:, :, :, 1] = wind_speed
     ds[no_wind, 0] = 999017
     ds[~no_wind, 0] = np.degrees(
         np.arctan2(sc[~no_wind, 1], sc[~no_wind, 2])
-   ) % 360
+    ) % 360
     return ds
 
 
@@ -204,6 +215,9 @@ def _train(
 
     Returns:
         typing.List of three fitted models (speed, sin, cos).
+
+    Raises:
+        AssertionError: If model_name is neither 'lgb' nor 'mlr'.
     """
     assert model_name in ('lgb', 'mlr')
     valid = ~np.isnan(label[:, :, :, 0])
@@ -305,7 +319,7 @@ def _test(models: typing.List, data: np.ndarray) -> np.ndarray:
         valid &= ~np.isnan(data[..., i])
     prediction = np.zeros(
         list(data.shape[:-1]) + [3], dtype=np.float32
-   ) + np.nan
+    ) + np.nan
     features = data[valid, :]
     comps = [model.predict(features) for model in models]
     prediction[valid] = np.stack(comps, axis=1)
@@ -329,7 +343,7 @@ def _test2(
     n_samples, n_hours, n_stations, n_features = data.shape
     prediction = np.zeros(
         (n_samples, n_hours, n_stations, 3), dtype=np.float32
-   ) + np.nan
+    ) + np.nan
     if option == 1:
         prediction = _test(models, data)
     elif option == 2:
@@ -361,31 +375,33 @@ def main(
         model_path: Reserved model directory (currently unused).
         output_path: Directory where output .npy files will be saved.
         station_info_path: pathlib.Path to the station information CSV file.
-
-    Returns:
-        None.
     """
+    # 1. Load configuration and prepare the input/output directories.
     cfg = utils.load_config()
     years = cfg['constants']['years']
     os.makedirs(output_path, exist_ok=True)
     input_dir = pathlib.Path(input_path)
     output_dir = pathlib.Path(output_path)
 
+    # 2. Load and sort the station metadata.
     station_info = pd.read_csv(
         station_info_path, encoding='gb2312', low_memory=False
     )
     station_info.sort_values(by=['台站号'], inplace=True)
     station_info.reset_index(drop=True, inplace=True)
 
+    # 3. Load NWP and observation data for every year.
     data_list = list()
     label_list = list()
     for year in years:
         data_list.append(np.load(input_dir / f'nwp{year}.npy'))
         label_list.append(np.load(input_dir / f'ob{year}.npy'))
 
-    lgb = {1: list(), 2: list(), 3: list(), 4: list()}
-    mlr = {1: list(), 2: list(), 3: list(), 4: list()}
+    # 4. Leave-one-year-out cross-validation over all years.
+    lgb_minutes = {1: list(), 2: list(), 3: list(), 4: list()}
+    mlr_minutes = {1: list(), 2: list(), 3: list(), 4: list()}
     for i in range(len(years)):
+        # 5. Build the training and test split for the held-out year.
         year = years[i]
         data_list2 = data_list.copy()
         data_list2.pop(i)
@@ -407,14 +423,24 @@ def main(
         nwp_label = _uv_to_ds(nwp_uv)
         np.save(output_dir / f'nwp_{year}.npy', nwp_label)
 
+        # 6. Train and predict for every aggregation option.
         for j in range(4):
+            # 7. Skip every option except the per-station one (option 3).
+            if j != 2:
+                continue
+
+            # 8. Train LightGBM and save its corrected predictions.
             time_arrow = arrow.now()
             models = _train2(train_data, train_sc, j + 1, 'lgb')
-            lgb[j + 1].append((arrow.now() - time_arrow).total_seconds() / 60)
+            lgb_minutes[j + 1].append(
+                (arrow.now() - time_arrow).total_seconds() / 60
+            )
             predict_sc = _test2(models, test_data, j + 1)
             predict_label = _sc_to_ds(predict_sc)
             np.save(output_dir / f'lgb_{j + 1}_{year}_sc.npy', predict_sc)
             np.save(output_dir / f'lgb_{j + 1}_{year}.npy', predict_label)
+
+            # 9. Standardize the features per aggregation option.
             train_x = np.copy(train_data)
             test_x = np.copy(test_data)
             n_samples, n_hours, n_stations, n_features = train_x.shape
@@ -466,21 +492,25 @@ def main(
                         test_x[:, k, sta_idx, :] = (
                             test_x[:, k, sta_idx, :] - data_mean
                        ) / data_std
+
+            # 10. Train the MLR baseline and save its predictions.
             time_arrow = arrow.now()
             models = _train2(train_x, train_sc, j + 1, 'mlr')
-            mlr[j + 1].append((arrow.now() - time_arrow).total_seconds() / 60)
+            mlr_minutes[j + 1].append(
+                (arrow.now() - time_arrow).total_seconds() / 60
+            )
             predict_sc = _test2(models, test_x, j + 1)
             np.save(output_dir / f'mlr_{j + 1}_{year}_sc.npy', predict_sc)
             predict_label = _sc_to_ds(predict_sc)
             np.save(output_dir / f'mlr_{j + 1}_{year}.npy', predict_label)
         print(f'Training and prediction for {year} completed.')
 
-    pd.DataFrame(lgb).to_csv(output_dir / 'lgb_time.csv', index=False)
-    pd.DataFrame(mlr).to_csv(output_dir / 'mlr_time.csv', index=False)
+    # pd.DataFrame(lgb).to_csv(output_dir / 'lgb_time.csv', index=False)
+    # pd.DataFrame(mlr).to_csv(output_dir / 'mlr_time.csv', index=False)
 
 
 if __name__ == '__main__':
-    print('Program lgb_sc.py started.')
+    print('Program lgb_sc.py started')
     total_start = arrow.now()
 
     cfg = utils.load_config()
@@ -497,5 +527,5 @@ if __name__ == '__main__':
     total_elapsed = (arrow.now() - total_start).total_seconds()
     print(
         f'Program lgb_sc.py finished, total time '
-        f'{utils.format_time(total_elapsed)}.'
+        f'{utils.format_time(total_elapsed)}'
     )

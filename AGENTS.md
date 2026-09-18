@@ -5,10 +5,7 @@ description: 10m wind speed machine learning forecast correction system for ECMW
 
 # Wind-10m Agent Guide
 
-> **Reference**: See `user-preferences` skill for:
-> - Coding standards
-> - Git workflow
-> - This document only records project-specific information.
+> **Reference**: This document only records project-specific information.
 
 ---
 
@@ -17,7 +14,7 @@ description: 10m wind speed machine learning forecast correction system for ECMW
 ### Your role
 
 - Maintain and extend the 10m wind speed forecast correction pipeline.
-- Ensure data preprocessing, model training, prediction, and evaluation scripts remain consistent with the skill rules.
+- Ensure data preprocessing, model training, prediction, and evaluation scripts remain consistent with the project's coding standards.
 - Keep documentation synchronized with code changes.
 
 ### Project knowledge
@@ -40,12 +37,14 @@ This project post-processes ECMWF numerical weather prediction (NWP) products to
 ```
 wind_10m/
 ├── config/                  # YAML configuration files
+├── download_obs.py          # Download per-station obs CSVs from CMADaaS
 ├── extract_ec.py            # Extract EC forecast data to stations
 ├── extract_obs.py           # Convert raw per-station obs CSVs to npy
 ├── convert_npy.py           # Convert CSV files to npy arrays
 ├── lgb_uv.py                # LightGBM UV-component training
 ├── lgb_wind.py              # LightGBM wind-magnitude training
 ├── lgb_cv.py                # LightGBM cross-validation
+├── lgb_sc.py                # LightGBM SC-encoding training variant
 ├── lgb_predict.py           # LightGBM prediction
 ├── pdfm.py / pdfm_uv.py     # PDF-matching post-processing models
 ├── avt.py, cnn.py, dnn.py, emd.py, gn.py, ots.py, transformer.py
@@ -53,9 +52,11 @@ wind_10m/
 ├── access.py                # Evaluation (legacy station set)
 ├── access97.py              # Evaluation (97 stations)
 ├── access97_uv.py           # Evaluation (97 stations, UV components)
+├── access97_sc.py           # Evaluation (97 stations, SC-encoded forecasts)
+├── rename_vars.py           # Rename variables in Python source files
 ├── models/                  # Reusable model modules (base_torch.py)
 ├── evaluation/              # Reusable plotting modules (access97*_plots.py)
-├── src/                     # Shared utilities (utils.py)
+├── src/                     # Shared utilities (utils.py, metrics.py)
 ├── README.md                # English project overview
 ├── README_cn.md             # Chinese project overview
 └── AGENTS.md                # This guide
@@ -70,6 +71,9 @@ wind_10m/
 ```bash
 # 1. Extract EC data to stations
 python extract_ec.py
+
+# 1a. (Optional) Download per-station obs CSVs from CMADaaS
+python download_obs.py
 
 # 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
 python extract_obs.py
@@ -89,6 +93,7 @@ python lgb_predict.py
 python access.py
 # or python access97.py
 # or python access97_uv.py
+# or python access97_sc.py
 ```
 
 ### Before running
@@ -96,6 +101,7 @@ python access.py
 - Ensure `config/config.local.windows.yaml` or `config/config.local.linux.yaml` contains valid local paths.
 - Install dependencies listed in the README.
 - Verify the meteva environment is available.
+- If `meb.read_station()` fails with micaps3 format errors (pandas >= 2), see <https://github.com/nmcdev/meteva/issues/193> for the fix.
 
 ---
 
@@ -111,7 +117,7 @@ No automated unit tests are currently in place. Manual verification steps:
 
 ## 4. Code Style 📖
 
-See `user-preferences` skill for the full coding standard. Project-specific conventions:
+Follow the general coding standards: English comments, output, and exception messages; `pathlib` for paths; YAML-managed configuration; Google-style docstrings with type annotations; lines within 80 characters. Project-specific conventions:
 
 - All comments and docstrings are in English.
 - External data column names and chart labels may remain in Chinese.
@@ -121,7 +127,7 @@ See `user-preferences` skill for the full coding standard. Project-specific conv
 
 ## 5. Git Workflow 📖
 
-See `user-preferences` skill for Git workflow. Additional notes:
+Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/Docs/Test/Config). Additional notes:
 
 - Do not commit `config/*.local*.yaml` files.
 - Do not run `git commit` or `git push` without explicit user approval.
@@ -144,7 +150,7 @@ See `user-preferences` skill for Git workflow. Additional notes:
 ### Never do
 - Commit local configuration files with real paths or credentials.
 - Run full end-to-end scripts that overwrite large output files without user confirmation.
-- Ignore skill coding standards and Git workflow rules.
+- Ignore the coding standards and Git workflow rules described above.
 
 ---
 
@@ -158,6 +164,7 @@ See `user-preferences` skill for Git workflow. Additional notes:
 | Documentation standardization | Rewrote `AGENTS.md` and `README.md` in English and created `README_cn.md` | 2026-07-21 |
 | Code standards and demo formalization | Formalized torch demo models, applied coding standards across the project, and split oversized evaluation files | 2026-07-22 |
 | New raw observation preprocessing | Added `extract_obs.py` (per-station raw CSVs at `paths.sta_raw` → `ob{year}[_suffix].npy`, same layout as `convert_npy.py`; cleaning: direction 360→0, direction [0,360), speed [0,1000), else NaN; max-wind pair stays NaN; Inst_Max maps to gust pair). Added `sta_raw` path and `obs_suffix` constant to config (local Windows value: `dth`). Committed as `45efc52` and pushed to Gitee + GitHub | 2026-09-14 |
+| Documentation cleanup | Resolved leftover Git conflict markers in `AGENTS.md`, `README.md`, `README_cn.md`, synced the file structure/commands with the actual repository layout, and removed the VS Code webview startup-race trigger (`window.restoreWindows: none`) | 2026-09-17 |
 
 ### In Progress
 
@@ -172,4 +179,4 @@ See `user-preferences` skill for Git workflow. Additional notes:
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-09-15
+**Last Updated**: 2026-09-17

@@ -25,7 +25,7 @@ paths:
   emd_sample_path: '<EMD_SAMPLE_PATH>'    # e.g. D:\data\emd_sample.csv
 
   # EC raw data directory (UNC path)
-  ec4ai: '<EC4AI_DIR>'                  # e.g. \\10.110.173.91\sqxt\EC4AI
+  ec4ai: '<EC4AI_DIR>'                  # e.g. \\<HOST>\<SHARE>\EC4AI
 
 # Common constants
 constants:
@@ -39,6 +39,7 @@ constants:
 forecast:
   ec_start_hour: 12      # EC forecast start hour in .npy
   ec_end_hour: 37       # EC forecast end hour in .npy (exclusive)
+  ec_lead_step: 3        # EC4AI raw file interval (hours) for extract_ec.py
   obs_start_hour: 13    # Observation/label start hour in .npy
   obs_end_hour: 37      # Observation/label end hour in .npy (exclusive)
   n_lead_times: 24      # Number of output lead times (12-36h, 24 hours)

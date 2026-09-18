@@ -1,6 +1,5 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Station observation extraction module
 
@@ -10,8 +9,8 @@ consumed by the model training scripts, replacing the per-hour CSV stage
 of convert_npy.py.
 
 Founded in 2026-07-25
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
@@ -152,7 +151,7 @@ def _build_year_array(
     station_count = len(station_ids)
     obs_data = np.zeros(
         (sample_count, N_LEAD_HOURS, station_count, 8), dtype=np.float32
-   ) + np.nan
+    ) + np.nan
     for sample_idx in range(sample_count):
         for lead_time in range(N_LEAD_HOURS):
             valid_time = time_begin.shift(
@@ -185,9 +184,6 @@ def main(
         output_path: Output directory for ob{year}.npy files.
         suffix: Optional output filename suffix, e.g. 'dth' produces
             ob2017_dth.npy. Defaults to '' (ob2017.npy).
-
-    Returns:
-        None
     """
     # ---- 1. Collect all station files from the input directory ----
     input_dir = pathlib.Path(input_path)

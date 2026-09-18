@@ -1,6 +1,5 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 DNN model for 10m wind speed correction.
 
@@ -8,8 +7,8 @@ MLP and Network-in-Network (NIN) style architectures for correcting
 ECMWF 10m wind speed forecasts.
 
 Founded in 2025-08-29
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-18
+@author: yinlb, deepseek-flash
 """
 
 import copy
@@ -35,14 +34,19 @@ BATCH_SIZE = 16
 
 
 class MLP(nn.Module):
-    """Multi-layer perceptron for wind speed correction."""
+    """
+    Multi-layer perceptron for wind speed correction.
+
+    Attributes:
+        _linear (nn.Sequential): Stack of linear, ReLU, and dropout blocks.
+    """
 
     def __init__(
         self,
         n_features: int,
         n_labels: int,
         dropout: float = 0.0,
-   ) -> None:
+    ) -> None:
         """
         Initialize MLP.
 
@@ -52,23 +56,46 @@ class MLP(nn.Module):
             dropout: Dropout probability.
         """
         super(MLP, self).__init__()
-        self.linear = nn.Sequential()
+        self._linear = nn.Sequential()
         for i, n_outputs in enumerate(N_NEURONS):
             n_inputs = N_NEURONS[i - 1] if i > 0 else n_features
-            self.linear += nn.Sequential(
+            self._linear += nn.Sequential(
                 nn.Linear(n_inputs, n_outputs, bias=True),
                 nn.ReLU(inplace=True),
                 nn.Dropout(dropout),
             )
-        self.linear += nn.Sequential(
+        self._linear += nn.Sequential(
             nn.Linear(N_NEURONS[-1], n_labels, bias=True),
             nn.ReLU(inplace=True),
         )
         self._initialization()
 
     def copy(self) -> 'MLP':
-        """Return a deep copy of the model."""
+        """
+        Return a deep copy of the model.
+
+        Returns:
+            MLP: Independent deep copy of this model.
+        """
         return copy.deepcopy(self)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the MLP to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor, flattened to
+                (batch, n_features) before the first linear layer.
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, n_labels).
+        """
+        batch = inputs.shape[0]
+        return self._linear(inputs.view(batch, -1))
+
+    def initialization(self) -> None:
+        """Public alias for weight initialization."""
+        self._initialization()
 
     def _initialization(self) -> None:
         """Initialize model weights."""
@@ -79,25 +106,22 @@ class MLP(nn.Module):
                 )
                 nn.init.constant_(module.bias, 0.01)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        batch = inputs.shape[0]
-        return self.linear(inputs.view(batch, -1))
-
-    def initialization(self) -> None:
-        """Public alias for weight initialization."""
-        self._initialization()
-
 
 class NIN(nn.Module):
-    """Network-in-Network style DNN for wind speed correction."""
+    """
+    Network-in-Network style DNN for wind speed correction.
+
+    Attributes:
+        _linear (nn.Sequential): Stack of 1x1 convolution, batch norm, and
+            ReLU blocks.
+    """
 
     def __init__(
         self,
         n_features: int,
         n_labels: int,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize NIN.
 
@@ -107,10 +131,10 @@ class NIN(nn.Module):
             device: Target device.
         """
         super(NIN, self).__init__()
-        self.linear = nn.Sequential()
+        self._linear = nn.Sequential()
         for i, n_outputs in enumerate(N_NEURONS):
             n_inputs = N_NEURONS[i - 1] if i > 0 else n_features
-            self.linear += nn.Sequential(
+            self._linear += nn.Sequential(
                 nn.Conv1d(
                     in_channels=n_inputs,
                     out_channels=n_outputs,
@@ -121,7 +145,7 @@ class NIN(nn.Module):
                 nn.BatchNorm1d(n_outputs, device=device),
                 nn.ReLU(inplace=True),
             )
-        self.linear += nn.Sequential(
+        self._linear += nn.Sequential(
             nn.Conv1d(
                 in_channels=N_NEURONS[-1],
                 out_channels=n_labels,
@@ -135,8 +159,30 @@ class NIN(nn.Module):
         self._initialization()
 
     def copy(self) -> 'NIN':
-        """Return a deep copy of the model."""
+        """
+        Return a deep copy of the model.
+
+        Returns:
+            NIN: Independent deep copy of this model.
+        """
         return copy.deepcopy(self)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the NIN to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor of shape (batch, n_features,
+                length).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, n_labels, length).
+        """
+        return self._linear(inputs)
+
+    def initialization(self) -> None:
+        """Public alias for weight initialization."""
+        self._initialization()
 
     def _initialization(self) -> None:
         """Initialize model weights."""
@@ -149,17 +195,18 @@ class NIN(nn.Module):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        return self.linear(inputs)
-
-    def initialization(self) -> None:
-        """Public alias for weight initialization."""
-        self._initialization()
-
 
 class DesNIN(nn.Module):
-    """Dense Network-in-Network for wind speed correction."""
+    """
+    Dense Network-in-Network for wind speed correction.
+
+    Attributes:
+        _input_layer (nn.Sequential): 1x1 convolution mapping the input
+            features to the hidden channel count.
+        _hidden_layers (nn.ModuleList): Dense hidden blocks, each taking the
+            sum of all previous feature maps.
+        _output_layer (nn.Sequential): 1x1 convolution producing the labels.
+    """
 
     def __init__(
         self,
@@ -168,7 +215,7 @@ class DesNIN(nn.Module):
         channels: int = 64,
         deep: int = 4,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize DesNIN.
 
@@ -180,7 +227,7 @@ class DesNIN(nn.Module):
             device: Target device.
         """
         super(DesNIN, self).__init__()
-        self.input_layer = nn.Sequential(
+        self._input_layer = nn.Sequential(
             nn.Conv1d(
                 in_channels=n_features,
                 out_channels=channels,
@@ -191,9 +238,9 @@ class DesNIN(nn.Module):
             nn.BatchNorm1d(channels, device=device),
             nn.ReLU(inplace=True),
         )
-        self.hidden_layers = nn.Moduletyping.List()
+        self._hidden_layers = nn.ModuleList()
         for _ in range(1, deep):
-            self.hidden_layers.append(nn.Sequential(
+            self._hidden_layers.append(nn.Sequential(
                 nn.Conv1d(
                     in_channels=channels,
                     out_channels=channels,
@@ -204,7 +251,7 @@ class DesNIN(nn.Module):
                 nn.BatchNorm1d(channels, device=device),
                 nn.ReLU(inplace=True),
             ))
-        self.output_layer = nn.Sequential(
+        self._output_layer = nn.Sequential(
             nn.Conv1d(
                 in_channels=channels,
                 out_channels=n_labels,
@@ -218,8 +265,35 @@ class DesNIN(nn.Module):
         self._initialization()
 
     def copy(self) -> 'DesNIN':
-        """Return a deep copy of the model."""
+        """
+        Return a deep copy of the model.
+
+        Returns:
+            DesNIN: Independent deep copy of this model.
+        """
         return copy.deepcopy(self)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the dense NIN to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor of shape (batch, n_features,
+                length).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, n_labels, length).
+        """
+        features = [self._input_layer(inputs)]
+        for hidden_layer in self._hidden_layers:
+            features.append(
+                hidden_layer(torch.sum(torch.stack(features), dim=0))
+            )
+        return self._output_layer(torch.sum(torch.stack(features), dim=0))
+
+    def initialization(self) -> None:
+        """Public alias for weight initialization."""
+        self._initialization()
 
     def _initialization(self) -> None:
         """Initialize model weights."""
@@ -232,22 +306,11 @@ class DesNIN(nn.Module):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        features = [self.input_layer(inputs)]
-        for hidden_layer in self.hidden_layers:
-            features.append(
-                hidden_layer(torch.sum(torch.stack(features), dim=0))
-            )
-        return self.output_layer(torch.sum(torch.stack(features), dim=0))
-
-    def initialization(self) -> None:
-        """Public alias for weight initialization."""
-        self._initialization()
-
 
 def _reshape_for_dnn(
+    # nwp: numerical weather prediction forecast array
     nwp: np.ndarray,
+    # obs: observation array
     obs: np.ndarray,
 ) -> typing.Tuple[np.ndarray, np.ndarray]:
     """
@@ -274,7 +337,16 @@ def _build_valid_mask(
     features: np.ndarray,
     labels: np.ndarray,
 ) -> np.ndarray:
-    """Return mask of samples without missing values."""
+    """
+    Return mask of samples without missing values.
+
+    Args:
+        features (np.ndarray): Feature array of shape (samples, features).
+        labels (np.ndarray): Label array of shape (samples, lead).
+
+    Returns:
+        np.ndarray: Boolean mask selecting the valid samples.
+    """
     mask = np.ones(labels.shape[0], dtype=np.bool_)
     for i in range(labels.shape[-1]):
         mask &= ~np.isnan(labels[:, i])
@@ -287,6 +359,7 @@ def _train_one_target(
     train_years: typing.List[int],
     val_year: int,
     target_idx: int,
+    # thres: wind speed thresholds in m/s
     thres: typing.Tuple[float, ...],
     output_dir: pathlib.Path,
 ) -> None:
@@ -301,8 +374,9 @@ def _train_one_target(
         thres: Thresholds for dice loss.
         output_dir: Directory to save predictions.
     """
-    data_list = []
-    label_list = []
+    # 1. Load the yearly arrays and concatenate them.
+    data_list = list()
+    label_list = list()
     for year in train_years:
         nwp, obs = base_torch.prepare_data(
             data_dir / f'nwp{year}.npy',
@@ -321,18 +395,18 @@ def _train_one_target(
         is_0_84=False,
     )
 
+    # 2. Reshape the arrays, drop invalid samples, and normalize.
     train_data, train_label = _reshape_for_dnn(train_data, train_label)
     val_data, val_label = _reshape_for_dnn(val_nwp, val_obs)
-
     train_mask = _build_valid_mask(train_data, train_label)
     val_mask = _build_valid_mask(val_data, val_label)
     train_x = train_data[train_mask]
     val_x = val_data[val_mask]
     train_y = train_label[train_mask]
     val_y = val_label[val_mask]
-
     train_x, val_x, _, _ = base_torch.normalize(train_x, val_x)
 
+    # 3. Build the data loaders, model, and loss, then train.
     train_dataset = Data.TensorDataset(
         torch.from_numpy(train_x).to(base_torch.DEVICE),
         torch.from_numpy(train_y).to(base_torch.DEVICE),
@@ -347,7 +421,6 @@ def _train_one_target(
     val_loader = Data.DataLoader(
         val_dataset, batch_size=BATCH_SIZE, shuffle=False
     )
-
     model = NIN(
         n_features=train_x.shape[1],
         n_labels=train_y.shape[1],
@@ -368,10 +441,10 @@ def _train_one_target(
         thres=thres,
     )
 
+    # 4. Predict on the validation set and save the results.
     pred = base_torch.predict(model, val_loader)
     corr = np.corrcoef(val_y[:, 0], pred[:, 0])[0, 1]
     print(f'DNN target {target_idx}: R={corr:.4f}')
-
     os.makedirs(output_dir, exist_ok=True)
     np.save(output_dir / f'dnn_{val_year}.npy', pred)
 

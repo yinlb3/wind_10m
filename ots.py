@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2024-07-27
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
@@ -86,7 +85,7 @@ def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
             + out[:, 84, :, :] * 5 / 6
         )
     else:
-        # Interpolate the first 0-24 h range.
+        # 3. Interpolate the first 0-24 h range.
         for i in range(8):
             out[:, 3 * i + 1, :, :] = (
                 out[:, 3 * i, :, :] * 2 / 3
@@ -109,13 +108,14 @@ def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
     Returns:
         Array whose last dimension holds [direction, speed].
     """
+    # 1. Compute wind speed and direction from the U/V components.
     out = np.zeros_like(uv, dtype=np.float32) + np.nan
     out[:, :, :, 1] = np.sqrt(
         uv[:, :, :, 0] ** 2 + uv[:, :, :, 1] ** 2
     )
     out[:, :, :, 0] = 180 + np.arctan2(
         uv[:, :, :, 0], uv[:, :, :, 1]
-   ) * 180 / np.pi
+    ) * 180 / np.pi
     return out
 
 
@@ -142,8 +142,8 @@ def _ots(
     # 1. Reference thresholds are processed from high to low.
     obs_thresholds = list(THRESHOLDS).copy()
     obs_thresholds.reverse()
-
     threshold = 11.0
+    # fcst: forecast (raw NWP side values, opposed to the observed side)
     fcst_thresholds = list()
     fcst_upper = 100.0
     obs_upper = 100.0
@@ -224,7 +224,9 @@ def main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
     years = cfg['constants']['years']
 
     # 1. Load all years of NWP and observation data.
+    # nwp: numerical weather prediction (yearly forecast arrays)
     nwp_years = list()
+    # obs: observation (yearly observed arrays)
     obs_years = list()
     for year in years:
         nwp_years.append(np.load(input_path / 'nwp{:d}.npy'.format(year)))
@@ -273,7 +275,7 @@ def main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
 
         # 5. Scheme 3: per-station OTS mapping.
         predict_speed = np.zeros_like(nwp_test_speed) + np.nan
-        for j in range(97):
+        for j in range(nwp_test_speed.shape[2]):
             predict_speed[:, :, j] = _ots(
                 nwp_train_speed[:, :, j],
                 train_obs[:, :, j],
@@ -300,7 +302,7 @@ def main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
 
 
 if __name__ == '__main__':
-    print('Program ots.py started.')
+    print('Program ots.py started')
     total_start = arrow.now()
 
     cfg = utils.load_config()
@@ -313,5 +315,5 @@ if __name__ == '__main__':
     total_elapsed = (arrow.now() - total_start).total_seconds()
     print(
         'Program ots.py finished, total time '
-        f'{utils.format_time(total_elapsed)}.'
+        f'{utils.format_time(total_elapsed)}'
     )

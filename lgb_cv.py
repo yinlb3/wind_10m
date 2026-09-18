@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2023-08-01
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import pathlib
@@ -140,9 +139,6 @@ def main(input_path: str, years: typing.List[int]) -> None:
         input_path: Directory containing the .npy forecast
             and observation files.
         years: typing.List of years to load for training.
-
-    Returns:
-        None
     """
     # 1. Load forecast and observation data for each year.
     input_dir = pathlib.Path(input_path)

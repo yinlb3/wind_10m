@@ -1,10 +1,9 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2023-07-19
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import datetime
@@ -43,9 +42,6 @@ def _draw_scatter(
         obs_data: Observation values.
         fcst_data: Forecast values.
         save_path: File path where the figure will be saved.
-
-    Returns:
-        None
     """
     # Calculate the point density.
     stacked_data = np.vstack([obs_data, fcst_data])
@@ -106,6 +102,9 @@ def _build_eval_dataframe(
     lgb_all: np.ndarray,
     nwp_all: np.ndarray,
     station_data: pd.DataFrame,
+    years: typing.List[int],
+    forecast: typing.Dict[str, int],
+    station_num: int,
 ) -> pd.DataFrame:
     """
     Build a unified evaluation DataFrame from loaded arrays.
@@ -115,22 +114,32 @@ def _build_eval_dataframe(
         lgb_all: LightGBM forecast array.
         nwp_all: NWP forecast array.
         station_data: Station metadata DataFrame.
+        years: Years covered by the loaded arrays.
+        forecast: Lead-time configuration, requires the keys
+            'ec_start_hour' and 'ec_end_hour'.
+        station_num: Number of stations in the arrays.
 
     Returns:
         Evaluation DataFrame with valid samples only.
     """
-    # 4382 is the number of forecast cycles for the configured years.
+    # Two forecast cycles per day over the configured years.
+    n_cycles = round(
+        (arrow.get(str(years[-1] + 1)) - arrow.get(str(years[0]))).days * 2
+    )
     time_array = np.zeros_like(obs_all, dtype='datetime64[ns]')
-    for cycle_idx in range(4382):
+    for cycle_idx in range(n_cycles):
         time_array[cycle_idx, :, :] = (
-            arrow.get('2017').shift(hours=12 * cycle_idx).datetime
+            arrow.get(str(years[0])).shift(hours=12 * cycle_idx).datetime
         )
     lead_time_array = np.zeros_like(obs_all, dtype=np.int_)
-    for lead_idx in range(25):
-        lead_time_array[:, lead_idx, :] = 12 + lead_idx
+    n_lead_times = forecast['ec_end_hour'] - forecast['ec_start_hour']
+    for lead_idx in range(n_lead_times):
+        lead_time_array[:, lead_idx, :] = (
+            forecast['ec_start_hour'] + lead_idx
+        )
     station_id_array = np.zeros_like(obs_all, dtype=np.int_)
     elev_array = np.zeros_like(obs_all, dtype=np.float_)
-    for station_idx in range(97):
+    for station_idx in range(station_num):
         station_id_array[:, :, station_idx] = station_data.loc[
             station_idx, 'id'
         ]
@@ -148,7 +157,7 @@ def _build_eval_dataframe(
         ),
         columns=['time', 'dtime', 'id', 'ob', 'NWP', 'LightGBM'],
     )
-    for station_idx in range(97):
+    for station_idx in range(station_num):
         eval_data.loc[
             eval_data.loc[:, 'id'] == station_data.loc[station_idx, 'id'],
             'lon',
@@ -423,7 +432,7 @@ def _evaluate_by_station(
     station_scores_df = station_data.copy()
     for col in METRIC_COLUMNS:
         station_scores_df.loc[:, col] = 0.0
-    for station_idx in range(97):
+    for station_idx in range(station_data.shape[0]):
         subset_data = meb.sele_by_para(
             eval_data, id=station_data.loc[station_idx, 'id']
         )
@@ -499,10 +508,7 @@ def main(
         input_path: Directory containing ob_<year>.npy, nwp_<year>.npy,
             and lgb_<year>.npy files.
         output_path: Directory where tables and figures will be saved.
-        station_info_path: pathlib.Path to the CSV file with station metadata.
-
-    Returns:
-        None
+        station_info_path: Path to the CSV file with station metadata.
     """
     # Ensure the output directory exists before writing results.
     os.makedirs(output_path, exist_ok=True)
@@ -524,7 +530,12 @@ def main(
     obs_all, lgb_all, nwp_all = _load_forecasts(input_path, years)
 
     # 3. Build the evaluation DataFrame and remove missing values.
-    eval_data = _build_eval_dataframe(obs_all, lgb_all, nwp_all, station_data)
+    eval_data = _build_eval_dataframe(
+        obs_all, lgb_all, nwp_all, station_data,
+        years=years,
+        forecast=cfg['forecast'],
+        station_num=cfg['constants']['station_num'],
+    )
 
     # 4. Evaluate by forecast lead time.
     _evaluate_by_lead_time(eval_data, output_path)
@@ -547,7 +558,7 @@ if __name__ == '__main__':
     input_path = pathlib.Path(cfg['paths']['wind5_model'])
     output_path = pathlib.Path(cfg['paths']['wind5_model']) / '图'
     station_info_path = pathlib.Path(cfg['paths']['station_csv'])
-    os.makedirs(str(output_path), exist_ok=True)
+    os.makedirs(output_path, exist_ok=True)
 
     if len(sys.argv) == 1:
         main(

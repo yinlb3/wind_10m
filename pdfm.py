@@ -1,16 +1,14 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2024-08-18
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import copy
 import os
 import pathlib
-import sys
 import typing
 
 import arrow
@@ -20,7 +18,12 @@ from src import utils
 
 
 class PDF:
-    """Probability density function matching model."""
+    """
+    Probability density function matching model.
+
+    Attributes:
+        _table (np.ndarray): Mapping table from observations to forecasts.
+    """
 
     def __init__(self) -> None:
         """Initialize the model with an empty mapping table."""
@@ -102,7 +105,7 @@ class PDF:
         return corrected
 
 
-def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
+def _interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
     """Interpolate forecast lead times to 1-hour resolution.
 
     Args:
@@ -176,7 +179,7 @@ def interp(data: np.ndarray, is_0_84: bool = False) -> np.ndarray:
     return data
 
 
-def uv_to_ds(uv: np.ndarray) -> np.ndarray:
+def _uv_to_ds(uv: np.ndarray) -> np.ndarray:
     """Convert UV wind components to wind speed and direction.
 
     Args:
@@ -191,7 +194,7 @@ def uv_to_ds(uv: np.ndarray) -> np.ndarray:
     )
     ds[:, :, :, 0] = 180 + np.arctan2(
         uv[:, :, :, 0], uv[:, :, :, 1]
-   ) * 180 / np.pi
+    ) * 180 / np.pi
     return ds
 
 
@@ -223,19 +226,19 @@ def main() -> None:
         train_label_list.pop(i)
 
         all_data = np.vstack(train_data_list)
-        train_data = interp(all_data[:, 12:37, :, :])[:, 1:, :, :]
+        train_data = _interp(all_data[:, 12:37, :, :])[:, 1:, :, :]
         train_label = np.vstack(train_label_list)
         train_label = train_label[:, 13:37, :, 3]
         train_label[train_label > 100] = np.nan
 
         all_data = data_list[i]
-        test_data = interp(all_data[:, 12:37, :, :])[:, 1:, :, :]
+        test_data = _interp(all_data[:, 12:37, :, :])[:, 1:, :, :]
         test_label = label_list[i]
         test_label = test_label[:, 13:37, :, 3]
         test_label[test_label > 100] = np.nan
 
-        nwp_train = uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
-        nwp_test = uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
+        nwp_train = _uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
+        nwp_test = _uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
 
         # Method 1: global PDFM.
         model = PDF()
@@ -253,7 +256,7 @@ def main() -> None:
 
         # Method 3: station-specific PDFM.
         predict_label = np.zeros_like(nwp_test) + np.nan
-        for j in range(97):
+        for j in range(nwp_test.shape[2]):
             model = PDF()
             model.fit(train_label[:, :, j], nwp_train[:, :, j])
             predict_label[:, :, j] = model.predict(nwp_test[:, :, j])
@@ -262,7 +265,7 @@ def main() -> None:
         # Method 4: lead-time and station-specific PDFM.
         predict_label = np.zeros_like(nwp_test) + np.nan
         for j in range(24):
-            for k in range(97):
+            for k in range(nwp_test.shape[2]):
                 model = PDF()
                 model.fit(train_label[:, j, k], nwp_train[:, j, k])
                 predict_label[:, j, k] = model.predict(nwp_test[:, j, k])
@@ -272,7 +275,7 @@ def main() -> None:
 
 
 if __name__ == '__main__':
-    print('Program pdfm.py started.')
+    print('Program pdfm.py started')
     start = arrow.now()
 
     main()
@@ -280,6 +283,6 @@ if __name__ == '__main__':
     elapsed = (arrow.now() - start).total_seconds()
     print(
         'Program pdfm.py finished, total time '
-        f'{utils.format_time(elapsed)}.'
+        f'{utils.format_time(elapsed)}'
     )
 

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2024-08-18
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import copy
@@ -24,6 +23,9 @@ class PDF:
 
     Builds a lookup table that maps each predicted quantile to the
     corresponding observed value, then applies that table to new predictions.
+
+    Attributes:
+        _table (np.ndarray): Mapping table from predictions to observations.
     """
 
     def __init__(self) -> None:
@@ -215,11 +217,11 @@ def _uv_to_ds(wind_uv: np.ndarray) -> np.ndarray:
     wind[~no_wind, 1] = speed
     wind[~no_wind, 0] = 180 + np.arctan2(
         wind_uv[~no_wind, 0], wind_uv[~no_wind, 1]
-   ) * 180 / np.pi
+    ) * 180 / np.pi
     return wind
 
 
-def _main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
+def main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
     """
     Run PDFM cross-validation experiments for wind U/V correction.
 
@@ -257,7 +259,7 @@ def _main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         nwp_train_uv = nwp_train[:, :, :, 3:5]
         nwp_test_uv = nwp_test[:, :, :, 3:5]
 
-        # Scheme 1: one model trained on all samples.
+        # 1. One model trained on all samples.
         predict_uv = np.zeros_like(nwp_test_uv, dtype=np.float32) + np.nan
         mask = train_uv[:, :, :, 0] != 999017
         model_u = PDF()
@@ -269,7 +271,7 @@ def _main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         predict_label = _uv_to_ds(predict_uv)
         np.save(output_path / f'pdfm_1_{year}.npy', predict_label)
 
-        # Scheme 2: one model per forecast lead time.
+        # 2. One model per forecast lead time.
         predict_uv = np.zeros_like(nwp_test_uv, dtype=np.float32) + np.nan
         for j in range(24):
             train_u = train_uv[:, j, :, 0]
@@ -288,9 +290,9 @@ def _main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         predict_label = _uv_to_ds(predict_uv)
         np.save(output_path / f'pdfm_2_{year}.npy', predict_label)
 
-        # Scheme 3: one model per station.
+        # 3. One model per station.
         predict_uv = np.zeros_like(nwp_test_uv, dtype=np.float32) + np.nan
-        for j in range(97):
+        for j in range(nwp_test_uv.shape[2]):
             train_u = train_uv[:, :, j, 0]
             train_v = train_uv[:, :, j, 1]
             nwp_u = nwp_train_uv[:, :, j, 0]
@@ -307,10 +309,10 @@ def _main(input_path: pathlib.Path, output_path: pathlib.Path) -> None:
         predict_label = _uv_to_ds(predict_uv)
         np.save(output_path / f'pdfm_3_{year}.npy', predict_label)
 
-        # Scheme 4: one model per lead time and station.
+        # 4. One model per lead time and station.
         predict_uv = np.zeros_like(nwp_test_uv, dtype=np.float32) + np.nan
         for j in range(24):
-            for k in range(97):
+            for k in range(nwp_test_uv.shape[2]):
                 train_u = train_uv[:, j, k, 0]
                 train_v = train_uv[:, j, k, 1]
                 nwp_u = nwp_train_uv[:, j, k, 0]
@@ -337,7 +339,7 @@ if __name__ == '__main__':
     input_path = pathlib.Path(cfg['paths']['wind_data'])
     output_path = pathlib.Path(cfg['paths']['project_wind']) / '97-uv'
     os.makedirs(output_path, exist_ok=True)
-    _main(input_path, output_path)
+    main(input_path, output_path)
 
     elapsed = (arrow.now() - start).total_seconds()
     print(

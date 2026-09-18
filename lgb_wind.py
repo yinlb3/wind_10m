@@ -1,10 +1,9 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2023-09-17
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
@@ -254,7 +253,7 @@ def _test2(
     label = np.zeros(
         shape=(n_samples, n_lead_times, n_stations),
         dtype=data.dtype,
-   ) + np.nan
+    ) + np.nan
     if option == 1:
         label = _test(models[0], data)
     elif option == 2:
@@ -359,9 +358,6 @@ def main(
         test_label = label_list[i]
         test_label = test_label[:, HOUR_BEGIN + 1:HOUR_END + 1, :, 3]
         test_label[test_label > 100] = np.nan
-
-        nwp_train_label = _uv_to_ds(train_data[:, :, :, 3:5])[:, :, :, 1]
-        nwp_test_label = _uv_to_ds(test_data[:, :, :, 3:5])[:, :, :, 1]
 
         # 5. Train and predict with four aggregation options.
         for j in range(4):

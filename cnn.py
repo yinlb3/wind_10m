@@ -1,6 +1,5 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 CNN model for 10m wind speed correction.
 
@@ -8,8 +7,8 @@ CNN model for 10m wind speed correction.
 10m wind speed forecasts.
 
 Founded in 2025-08-29
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-18
+@author: yinlb, deepseek-flash
 """
 
 import copy
@@ -42,7 +41,20 @@ BATCH_SIZE = 256
 
 
 class Block(nn.Module):
-    """Residual convolutional block for ResNet."""
+    """
+    Residual convolutional block for ResNet.
+
+    Attributes:
+        _conv1 (nn.Conv1d): 1x1 convolution projecting the input channels.
+        _bn1 (nn.BatchNorm1d): Batch norm after the first convolution.
+        _conv2 (nn.Conv1d): 3x3 convolution over the hidden channels.
+        _bn2 (nn.BatchNorm1d): Batch norm after the second convolution.
+        _conv3 (nn.Conv1d): 1x1 convolution producing the output channels.
+        _bn3 (nn.BatchNorm1d): Batch norm after the third convolution.
+        _downsample (nn.Sequential): 1x1 convolution matching the residual
+            shortcut to the output channel count.
+        _relu (nn.ReLU): Shared in-place activation.
+    """
 
     def __init__(
         self,
@@ -50,7 +62,7 @@ class Block(nn.Module):
         hidden_channels: int,
         out_channels: int,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize Block.
 
@@ -61,15 +73,15 @@ class Block(nn.Module):
             device: Target device.
         """
         super(Block, self).__init__()
-        self.conv1 = nn.Conv1d(
+        self._conv1 = nn.Conv1d(
             in_channels=in_channels,
             out_channels=hidden_channels,
             kernel_size=1,
             bias=False,
             device=device,
         )
-        self.bn1 = nn.BatchNorm1d(hidden_channels, device=device)
-        self.conv2 = nn.Conv1d(
+        self._bn1 = nn.BatchNorm1d(hidden_channels, device=device)
+        self._conv2 = nn.Conv1d(
             in_channels=hidden_channels,
             out_channels=hidden_channels,
             kernel_size=3,
@@ -77,16 +89,16 @@ class Block(nn.Module):
             bias=False,
             device=device,
         )
-        self.bn2 = nn.BatchNorm1d(hidden_channels, device=device)
-        self.conv3 = nn.Conv1d(
+        self._bn2 = nn.BatchNorm1d(hidden_channels, device=device)
+        self._conv3 = nn.Conv1d(
             in_channels=hidden_channels,
             out_channels=out_channels,
             kernel_size=1,
             bias=False,
             device=device,
         )
-        self.bn3 = nn.BatchNorm1d(out_channels, device=device)
-        self.downsample = nn.Sequential(
+        self._bn3 = nn.BatchNorm1d(out_channels, device=device)
+        self._downsample = nn.Sequential(
             nn.Conv1d(
                 in_channels=in_channels,
                 out_channels=out_channels,
@@ -96,37 +108,62 @@ class Block(nn.Module):
             ),
             nn.BatchNorm1d(out_channels, device=device),
         )
-        self.relu = nn.ReLU(inplace=True)
+        self._relu = nn.ReLU(inplace=True)
 
     def copy(self) -> 'Block':
-        """Return a deep copy of the block."""
+        """
+        Return a deep copy of the block.
+
+        Returns:
+            Block: Independent deep copy of this block.
+        """
         return copy.deepcopy(self)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
+        """
+        Apply the residual block to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor of shape (batch, in_channels,
+                length).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, out_channels,
+                length).
+        """
         identity = inputs
-        out = self.conv1(inputs)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-        out = self.conv3(out)
-        out = self.bn3(out)
-        out += self.downsample(identity)
-        out = self.relu(out)
+        out = self._conv1(inputs)
+        out = self._bn1(out)
+        out = self._relu(out)
+        out = self._conv2(out)
+        out = self._bn2(out)
+        out = self._relu(out)
+        out = self._conv3(out)
+        out = self._bn3(out)
+        out += self._downsample(identity)
+        out = self._relu(out)
         return out
 
 
 class ResNet(nn.Module):
-    """ResNet backbone for wind speed correction."""
+    """
+    ResNet backbone for wind speed correction.
+
+    Attributes:
+        _input (nn.Sequential): Stem convolution applied to the features.
+        _layer1 (nn.Sequential): First stack of residual blocks.
+        _layer2 (nn.Sequential): Second stack of residual blocks.
+        _layer3 (nn.Sequential): Third stack of residual blocks.
+        _layer4 (nn.Sequential): Fourth stack of residual blocks.
+        _output (nn.Sequential): 1x1 convolution producing the labels.
+    """
 
     def __init__(
         self,
         n_features: int,
         n_labels: int,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize ResNet.
 
@@ -136,7 +173,7 @@ class ResNet(nn.Module):
             device: Target device.
         """
         super(ResNet, self).__init__()
-        self.input = nn.Sequential(
+        self._input = nn.Sequential(
             nn.Conv1d(
                 in_channels=n_features,
                 out_channels=N_FEATURES[0],
@@ -148,23 +185,23 @@ class ResNet(nn.Module):
             nn.BatchNorm1d(N_FEATURES[0], device=device),
             nn.ReLU(inplace=True),
         )
-        self.layer1 = self._make_layer(
+        self._layer1 = self._make_layer(
             N_FEATURES[1][1], N_FEATURES[1][2], N_FEATURES[1][3],
             N_FEATURES[1][0], device,
         )
-        self.layer2 = self._make_layer(
+        self._layer2 = self._make_layer(
             N_FEATURES[2][1], N_FEATURES[2][2], N_FEATURES[2][3],
             N_FEATURES[2][0], device,
         )
-        self.layer3 = self._make_layer(
+        self._layer3 = self._make_layer(
             N_FEATURES[3][1], N_FEATURES[3][2], N_FEATURES[3][3],
             N_FEATURES[3][0], device,
         )
-        self.layer4 = self._make_layer(
+        self._layer4 = self._make_layer(
             N_FEATURES[4][1], N_FEATURES[4][2], N_FEATURES[4][3],
             N_FEATURES[4][0], device,
         )
-        self.output = nn.Sequential(
+        self._output = nn.Sequential(
             nn.Conv1d(
                 in_channels=N_FEATURES[4][3],
                 out_channels=n_labels,
@@ -177,8 +214,36 @@ class ResNet(nn.Module):
         self._initialization()
 
     def copy(self) -> 'ResNet':
-        """Return a deep copy of the model."""
+        """
+        Return a deep copy of the model.
+
+        Returns:
+            ResNet: Independent deep copy of this model.
+        """
         return copy.deepcopy(self)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the ResNet to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor of shape (batch, n_features,
+                length).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, n_labels, length).
+        """
+        out = self._input(inputs)
+        out = self._layer1(out)
+        out = self._layer2(out)
+        out = self._layer3(out)
+        out = self._layer4(out)
+        out = self._output(out)
+        return out
+
+    def initialization(self) -> None:
+        """Public alias for weight initialization."""
+        self._initialization()
 
     def _make_layer(
         self,
@@ -187,8 +252,20 @@ class ResNet(nn.Module):
         out_channels: int,
         n_blocks: int,
         device: typing.Union[int, str, None],
-   ) -> nn.Sequential:
-        """Create a stack of residual blocks."""
+    ) -> nn.Sequential:
+        """
+        Create a stack of residual blocks.
+
+        Args:
+            in_channels (int): Channels of the first block input.
+            hidden_channels (int): Channels of the block bottleneck.
+            out_channels (int): Channels of the block output.
+            n_blocks (int): Number of residual blocks in the stack.
+            device (typing.Union[int, str, None]): Target device.
+
+        Returns:
+            nn.Sequential: Sequential container of the residual blocks.
+        """
         layers = [Block(in_channels, hidden_channels, out_channels, device)]
         for _ in range(1, n_blocks):
             layers.append(
@@ -207,30 +284,28 @@ class ResNet(nn.Module):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        out = self.input(inputs)
-        out = self.layer1(out)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = self.layer4(out)
-        out = self.output(out)
-        return out
-
-    def initialization(self) -> None:
-        """Public alias for weight initialization."""
-        self._initialization()
-
 
 class CNN(nn.Module):
-    """Simple 1D CNN for wind speed correction."""
+    """
+    Simple 1D CNN for wind speed correction.
+
+    Attributes:
+        _conv1 (nn.Conv1d): 3x3 convolution from n_features to 64 channels.
+        _bn1 (nn.BatchNorm1d): Batch norm after the first convolution.
+        _conv2 (nn.Conv1d): 3x3 convolution from 64 to 128 channels.
+        _bn2 (nn.BatchNorm1d): Batch norm after the second convolution.
+        _conv3 (nn.Conv1d): 3x3 convolution from 128 to 256 channels.
+        _bn3 (nn.BatchNorm1d): Batch norm after the third convolution.
+        _conv4 (nn.Conv1d): 1x1 convolution producing the labels.
+        _relu (nn.ReLU): Shared in-place activation.
+    """
 
     def __init__(
         self,
         n_features: int,
         n_labels: int,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize CNN.
 
@@ -240,42 +315,68 @@ class CNN(nn.Module):
             device: Target device.
         """
         super(CNN, self).__init__()
-        self.conv1 = nn.Conv1d(
+        self._conv1 = nn.Conv1d(
             in_channels=n_features,
             out_channels=64,
             kernel_size=3,
             padding=1,
             device=device,
         )
-        self.bn1 = nn.BatchNorm1d(64, device=device)
-        self.conv2 = nn.Conv1d(
+        self._bn1 = nn.BatchNorm1d(64, device=device)
+        self._conv2 = nn.Conv1d(
             in_channels=64,
             out_channels=128,
             kernel_size=3,
             padding=1,
             device=device,
         )
-        self.bn2 = nn.BatchNorm1d(128, device=device)
-        self.conv3 = nn.Conv1d(
+        self._bn2 = nn.BatchNorm1d(128, device=device)
+        self._conv3 = nn.Conv1d(
             in_channels=128,
             out_channels=256,
             kernel_size=3,
             padding=1,
             device=device,
         )
-        self.bn3 = nn.BatchNorm1d(256, device=device)
-        self.conv4 = nn.Conv1d(
+        self._bn3 = nn.BatchNorm1d(256, device=device)
+        self._conv4 = nn.Conv1d(
             in_channels=256,
             out_channels=n_labels,
             kernel_size=1,
             device=device,
         )
-        self.relu = nn.ReLU(inplace=True)
+        self._relu = nn.ReLU(inplace=True)
         self._initialization()
 
     def copy(self) -> 'CNN':
-        """Return a deep copy of the model."""
+        """
+        Return a deep copy of the model.
+
+        Returns:
+            CNN: Independent deep copy of this model.
+        """
         return copy.deepcopy(self)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Apply the CNN to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor of shape (batch, n_features,
+                length).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, n_labels, length).
+        """
+        out = self._relu(self._bn1(self._conv1(inputs)))
+        out = self._relu(self._bn2(self._conv2(out)))
+        out = self._relu(self._bn3(self._conv3(out)))
+        out = self._conv4(out)
+        return out
+
+    def initialization(self) -> None:
+        """Public alias for weight initialization."""
+        self._initialization()
 
     def _initialization(self) -> None:
         """Initialize model weights."""
@@ -288,21 +389,11 @@ class CNN(nn.Module):
                 nn.init.constant_(module.weight, 1)
                 nn.init.constant_(module.bias, 0)
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        out = self.relu(self.bn1(self.conv1(inputs)))
-        out = self.relu(self.bn2(self.conv2(out)))
-        out = self.relu(self.bn3(self.conv3(out)))
-        out = self.conv4(out)
-        return out
-
-    def initialization(self) -> None:
-        """Public alias for weight initialization."""
-        self._initialization()
-
 
 def _reshape_for_cnn(
+    # nwp: numerical weather prediction forecast array
     nwp: np.ndarray,
+    # obs: observation array
     obs: np.ndarray,
 ) -> typing.Tuple[np.ndarray, np.ndarray]:
     """
@@ -329,7 +420,17 @@ def _build_valid_mask(
     features: np.ndarray,
     labels: np.ndarray,
 ) -> np.ndarray:
-    """Return mask of samples without missing values."""
+    """
+    Return mask of samples without missing values.
+
+    Args:
+        features (np.ndarray): Feature array of shape
+            (samples, features, lead).
+        labels (np.ndarray): Label array of shape (samples, 1, lead).
+
+    Returns:
+        np.ndarray: Boolean mask selecting the valid samples.
+    """
     mask = np.ones(labels.shape[0], dtype=np.bool_)
     for time_idx in range(labels.shape[-1]):
         mask &= ~np.isnan(labels[:, 0, time_idx])
@@ -343,6 +444,7 @@ def _train_one_target(
     train_years: typing.List[int],
     val_year: int,
     target_idx: int,
+    # thres: wind speed thresholds in m/s
     thres: typing.Tuple[float, ...],
     output_dir: pathlib.Path,
 ) -> None:
@@ -357,8 +459,9 @@ def _train_one_target(
         thres: Thresholds for dice loss.
         output_dir: Directory to save predictions.
     """
-    data_list = []
-    label_list = []
+    # 1. Load the yearly arrays and concatenate them.
+    data_list = list()
+    label_list = list()
     for year in train_years:
         nwp, obs = base_torch.prepare_data(
             data_dir / f'nwp{year}.npy',
@@ -377,18 +480,18 @@ def _train_one_target(
         is_0_84=False,
     )
 
+    # 2. Reshape the arrays, drop invalid samples, and normalize.
     train_data, train_label = _reshape_for_cnn(train_data, train_label)
     val_data, val_label = _reshape_for_cnn(val_nwp, val_obs)
-
     train_mask = _build_valid_mask(train_data, train_label)
     val_mask = _build_valid_mask(val_data, val_label)
     train_x = train_data[train_mask]
     val_x = val_data[val_mask]
     train_y = train_label[train_mask]
     val_y = val_label[val_mask]
-
     train_x, val_x, _, _ = base_torch.normalize(train_x, val_x)
 
+    # 3. Build the data loaders, model, and loss, then train.
     train_dataset = Data.TensorDataset(
         torch.from_numpy(train_x).to(base_torch.DEVICE),
         torch.from_numpy(train_y).to(base_torch.DEVICE),
@@ -403,7 +506,6 @@ def _train_one_target(
     val_loader = Data.DataLoader(
         val_dataset, batch_size=BATCH_SIZE, shuffle=False
     )
-
     model = CNN(
         n_features=train_x.shape[1], n_labels=1, device=base_torch.DEVICE
     )
@@ -422,10 +524,10 @@ def _train_one_target(
         thres=thres,
     )
 
+    # 4. Predict on the validation set and save the results.
     pred = base_torch.predict(model, val_loader)
     corr = np.corrcoef(val_y[:, 0], pred[:, 0])[0, 1]
     print(f'CNN target {target_idx}: R={corr:.4f}')
-
     os.makedirs(output_dir, exist_ok=True)
     np.save(output_dir / f'cnn_{val_year}.npy', pred)
 

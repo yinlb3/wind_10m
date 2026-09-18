@@ -1,6 +1,5 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Data format conversion module
 
@@ -8,8 +7,8 @@ Convert EC forecast CSV and observation CSV files into numpy array format
 (.npy) for subsequent model training.
 
 Founded in 2023-07-17
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
@@ -87,8 +86,6 @@ def main(
         station_info_path: Station information CSV file path.
         year: Year to process (2017-2022).
 
-    Returns:
-        None
 
     Raises:
         FileNotFoundError: If the station information file does not exist.
@@ -113,12 +110,12 @@ def main(
     nwp_data = np.zeros(
         (sample_count, N_LEAD_HOURS, station_count, len(ELEMENTS)),
         dtype=np.float32,
-   ) + np.nan
+    ) + np.nan
     # OBS: Observation
     obs_data = np.zeros(
         (sample_count, N_LEAD_HOURS, station_count, N_OBS_ELEMENTS),
         dtype=np.float32,
-   ) + np.nan
+    ) + np.nan
     print(f'Processing year {year}, sample_count = {sample_count}')
 
     nwp_dir = pathlib.Path(nwp_csv_path)

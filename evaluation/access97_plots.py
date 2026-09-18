@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-
 """
 Plotting helpers for evaluation/access97.py.
 
 Founded in 2026-07-22
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-18
+@author: yinlb, deepseek-flash
 """
 
 import pathlib
+import typing
 
 import numpy as np
 import pandas as pd
@@ -16,22 +16,22 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 
 
-def _plot_rmse_improvement_bars(
+def plot_rmse_improvement_bars(
     rmse_improve: np.ndarray,
     figure_dir: pathlib.Path,
     filename: str,
-    x_labels: list,
+    x_labels: typing.List[str],
     x_label: str,
 ) -> None:
     """
     Draw grouped RMSE improvement bar charts.
 
     Args:
-        rmse_improve: Array of shape (3, n_groups).
-        figure_dir: Directory to save figures.
-        filename: Output filename.
-        x_labels: Labels for the x-axis.
-        x_label: X-axis title.
+        rmse_improve (np.ndarray): Array of shape (3, n_groups).
+        figure_dir (pathlib.Path): Directory to save figures.
+        filename (str): Output filename.
+        x_labels (typing.List[str]): Labels for the x-axis.
+        x_label (str): X-axis title.
     """
     n_groups = rmse_improve.shape[1]
     plt.figure(figsize=(15, 5))
@@ -68,30 +68,30 @@ def _plot_rmse_improvement_bars(
     print(np.min(rmse_improve), np.max(rmse_improve))
 
 
-def _plot_rmse_scatter(
+def plot_rmse_scatter(
     station_info: pd.DataFrame,
     rmse_improve_sta: np.ndarray,
     figure_dir: pathlib.Path,
     var_name: str,
     x_label: str,
-    x_lims: tuple,
-    x_ticks: list,
-    x_tick_labels: list,
+    x_lims: typing.Tuple[float, float],
+    x_ticks: typing.List[str],
+    x_tick_labels: typing.List[str],
     filename: str,
 ) -> None:
     """
     Plot RMSE improvement versus a station geographic variable.
 
     Args:
-        station_info: Station metadata DataFrame.
-        rmse_improve_sta: Station-level RMSE improvements.
-        figure_dir: Directory to save figures.
-        var_name: Column name in station_info to use as x-axis.
-        x_label: X-axis title.
-        x_lims: X-axis limits.
-        x_ticks: X-axis tick positions.
-        x_tick_labels: X-axis tick labels.
-        filename: Output filename.
+        station_info (pd.DataFrame): Station metadata DataFrame.
+        rmse_improve_sta (np.ndarray): Station-level RMSE improvements.
+        figure_dir (pathlib.Path): Directory to save figures.
+        var_name (str): Column name in station_info to use as x-axis.
+        x_label (str): X-axis title.
+        x_lims (typing.Tuple[float, float]): X-axis limits.
+        x_ticks (typing.List[str]): X-axis tick positions.
+        x_tick_labels (typing.List[str]): X-axis tick labels.
+        filename (str): Output filename.
     """
     plt.figure(figsize=(5, 5))
     plt.scatter(
@@ -134,7 +134,7 @@ def _plot_rmse_scatter(
         )
 
 
-def _plot_rmse_violin(
+def plot_rmse_violin(
     rmse_improve_sta: np.ndarray,
     figure_dir: pathlib.Path,
 ) -> None:
@@ -142,8 +142,8 @@ def _plot_rmse_violin(
     Draw violin plot of station RMSE improvement distributions.
 
     Args:
-        rmse_improve_sta: Station-level RMSE improvements.
-        figure_dir: Directory to save figures.
+        rmse_improve_sta (np.ndarray): Station-level RMSE improvements.
+        figure_dir (pathlib.Path): Directory to save figures.
     """
     plt.figure(figsize=(5, 5))
     sns.violinplot(

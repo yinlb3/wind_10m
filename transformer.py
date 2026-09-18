@@ -1,6 +1,5 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Transformer model for 10m wind speed correction.
 
@@ -8,8 +7,8 @@ Transformer encoder architecture for correcting ECMWF 10m wind speed
 forecasts.
 
 Founded in 2025-09-09
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-18
+@author: yinlb, deepseek-flash
 """
 
 import copy
@@ -35,7 +34,14 @@ BATCH_SIZE = 256
 
 
 class PositionalEncoding(nn.Module):
-    """Inject positional information with sine and cosine encodings."""
+    """
+    Inject positional information with sine and cosine encodings.
+
+    Attributes:
+        _dropout (nn.Dropout): Dropout applied to the encoded input.
+        pe (torch.Tensor): Registered buffer holding the sine and cosine
+            encodings of shape (max_len, 1, d_model).
+    """
 
     def __init__(
         self,
@@ -43,7 +49,7 @@ class PositionalEncoding(nn.Module):
         dropout: float = 0.1,
         max_len: int = 5000,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize PositionalEncoding.
 
@@ -54,7 +60,7 @@ class PositionalEncoding(nn.Module):
             device: Target device.
         """
         super(PositionalEncoding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
+        self._dropout = nn.Dropout(p=dropout)
         pe = torch.zeros(max_len, d_model, device=device)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(
@@ -67,29 +73,62 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def copy(self) -> 'PositionalEncoding':
-        """Return a deep copy of the module."""
+        """
+        Return a deep copy of the module.
+
+        Returns:
+            PositionalEncoding: Independent deep copy of this module.
+        """
         return copy.deepcopy(self)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Add positional encoding to inputs."""
+        """
+        Add the positional encoding to the input.
+
+        Args:
+            inputs (torch.Tensor): Input tensor broadcastable with the
+                positional encoding buffer.
+
+        Returns:
+            torch.Tensor: Input with positional information added.
+        """
         out = inputs + self.pe[:inputs.size(0), :].transpose(0, 1)
-        return self.dropout(out)
+        return self._dropout(out)
 
 
 class TransformerModel(nn.Transformer):
-    """Transformer model for wind speed correction."""
+    """
+    Transformer model for wind speed correction.
+
+    Attributes:
+        _model_type (str): Identifier of the model type.
+        _src_mask (NoneType): Placeholder causal mask, unused by this model.
+        _pos_encoder (PositionalEncoding): Adds positional information to the
+            embedded features.
+        _input_emb (nn.Sequential): 1x1 convolution, layer norm, and GELU
+            embedding the input features.
+        _decoder (nn.Sequential): 1x1 convolution, layer norm, and ReLU
+            producing the output labels.
+        _ninp (int): Embedding dimension of the transformer.
+    """
 
     def __init__(
         self,
+        # nfeat: number of features per input sample
         nfeat: int,
+        # nlabel: number of output label channels
         nlabel: int,
+        # ninp: transformer input (embedding) dimension
         ninp: int = 512,
+        # nhead: number of attention heads
         nhead: int = 8,
+        # nhid: feed-forward hidden dimension
         nhid: int = 2048,
+        # nlayers: number of transformer encoder layers
         nlayers: int = 6,
         dropout: float = 0.5,
         device: typing.Union[int, str, None] = None,
-   ) -> None:
+    ) -> None:
         """
         Initialize TransformerModel.
 
@@ -111,14 +150,14 @@ class TransformerModel(nn.Transformer):
             batch_first=True,
             device=device,
         )
-        self.model_type = 'Transformer'
-        self.src_mask = None
-        self.pos_encoder = PositionalEncoding(
+        self._model_type = 'Transformer'
+        self._src_mask = None
+        self._pos_encoder = PositionalEncoding(
             d_model=ninp,
             dropout=dropout,
             device=device,
         )
-        self.input_emb = nn.Sequential(
+        self._input_emb = nn.Sequential(
             nn.Conv1d(
                 in_channels=nfeat,
                 out_channels=ninp,
@@ -129,7 +168,7 @@ class TransformerModel(nn.Transformer):
             nn.LayerNorm([ninp, 24], device=device),
             nn.GELU(),
         )
-        self.decoder = nn.Sequential(
+        self._decoder = nn.Sequential(
             nn.Conv1d(
                 in_channels=ninp,
                 out_channels=nlabel,
@@ -140,12 +179,8 @@ class TransformerModel(nn.Transformer):
             nn.LayerNorm([nlabel, 24], device=device),
             nn.ReLU(),
         )
-        self.ninp = ninp
+        self._ninp = ninp
         self.init_weights()
-
-    def _generate_square_subsequent_mask(self, size: int) -> torch.Tensor:
-        """Generate causal mask for transformer."""
-        return torch.log(torch.tril(torch.ones(size, size)))
 
     def init_weights(self) -> None:
         """Initialize model weights."""
@@ -155,22 +190,49 @@ class TransformerModel(nn.Transformer):
                 nn.init.zeros_(module.bias)
 
     def copy(self) -> 'TransformerModel':
-        """Return a deep copy of the model."""
+        """
+        Return a deep copy of the model.
+
+        Returns:
+            TransformerModel: Independent deep copy of this model.
+        """
         return copy.deepcopy(self)
 
     def forward(self, src: torch.Tensor) -> torch.Tensor:
-        """Forward pass."""
-        out = self.input_emb(src) * math.sqrt(self.ninp)
-        out = self.pos_encoder(out)
+        """
+        Apply the transformer to the input.
+
+        Args:
+            src (torch.Tensor): Input tensor of shape (batch, nfeat, length).
+
+        Returns:
+            torch.Tensor: Output tensor of shape (batch, nlabel, length).
+        """
+        out = self._input_emb(src) * math.sqrt(self._ninp)
+        out = self._pos_encoder(out)
         out = out.transpose(0, 1)
         out = self.encoder(out)
         out = out.transpose(0, 1)
-        out = self.decoder(out)
+        out = self._decoder(out)
         return out
+
+    def _generate_square_subsequent_mask(self, size: int) -> torch.Tensor:
+        """
+        Generate the causal mask for the transformer.
+
+        Args:
+            size (int): Sequence length of the mask.
+
+        Returns:
+            torch.Tensor: Lower-triangular mask of shape (size, size).
+        """
+        return torch.log(torch.tril(torch.ones(size, size)))
 
 
 def _reshape_for_transformer(
+    # nwp: numerical weather prediction forecast array
     nwp: np.ndarray,
+    # obs: observation array
     obs: np.ndarray,
 ) -> typing.Tuple[np.ndarray, np.ndarray]:
     """
@@ -200,7 +262,17 @@ def _build_valid_mask(
     features: np.ndarray,
     labels: np.ndarray,
 ) -> np.ndarray:
-    """Return mask of samples without missing values."""
+    """
+    Return mask of samples without missing values.
+
+    Args:
+        features (np.ndarray): Feature array of shape
+            (samples, features, lead).
+        labels (np.ndarray): Label array of shape (samples, 1, lead).
+
+    Returns:
+        np.ndarray: Boolean mask selecting the valid samples.
+    """
     mask = np.ones(labels.shape[0], dtype=np.bool_)
     for time_idx in range(labels.shape[-1]):
         mask &= ~np.isnan(labels[:, 0, time_idx])
@@ -214,6 +286,7 @@ def _train_one_target(
     train_years: typing.List[int],
     val_year: int,
     target_idx: int,
+    # thres: wind speed thresholds in m/s
     thres: typing.Tuple[float, ...],
     output_dir: pathlib.Path,
 ) -> None:
@@ -228,8 +301,9 @@ def _train_one_target(
         thres: Thresholds for dice loss.
         output_dir: Directory to save predictions.
     """
-    data_list = []
-    label_list = []
+    # 1. Load the yearly arrays and concatenate them.
+    data_list = list()
+    label_list = list()
     for year in train_years:
         nwp, obs = base_torch.prepare_data(
             data_dir / f'nwp{year}.npy',
@@ -248,18 +322,18 @@ def _train_one_target(
         is_0_84=False,
     )
 
+    # 2. Reshape the arrays, drop invalid samples, and normalize.
     train_data, train_label = _reshape_for_transformer(train_data, train_label)
     val_data, val_label = _reshape_for_transformer(val_nwp, val_obs)
-
     train_mask = _build_valid_mask(train_data, train_label)
     val_mask = _build_valid_mask(val_data, val_label)
     train_x = train_data[train_mask]
     val_x = val_data[val_mask]
     train_y = train_label[train_mask]
     val_y = val_label[val_mask]
-
     train_x, val_x, _, _ = base_torch.normalize(train_x, val_x)
 
+    # 3. Build the data loaders, model, and loss, then train.
     train_dataset = Data.TensorDataset(
         torch.from_numpy(train_x).to(base_torch.DEVICE),
         torch.from_numpy(train_y).to(base_torch.DEVICE),
@@ -274,7 +348,6 @@ def _train_one_target(
     val_loader = Data.DataLoader(
         val_dataset, batch_size=BATCH_SIZE, shuffle=False
     )
-
     model = TransformerModel(
         nfeat=train_x.shape[1],
         nlabel=1,
@@ -295,10 +368,10 @@ def _train_one_target(
         thres=thres,
     )
 
+    # 4. Predict on the validation set and save the results.
     pred = base_torch.predict(model, val_loader)
     corr = np.corrcoef(val_y[:, 0], pred[:, 0])[0, 1]
     print(f'Transformer target {target_idx}: R={corr:.4f}')
-
     os.makedirs(output_dir, exist_ok=True)
     np.save(output_dir / f'transformer_{val_year}.npy', pred)
 

@@ -3,26 +3,27 @@
 Rename variables in Python source files using tokenize.
 
 Founded in 2026-07-22
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import pathlib
 import tokenize
+import typing
 
 import arrow
 
 from src import utils
 
 
-def rename_in_file(path: pathlib.Path, mapping: dict[str, str]) -> None:
+def _rename_in_file(path: pathlib.Path, mapping: typing.Dict[str, str]) -> None:
     """Replace NAME tokens according to mapping; preserve line endings."""
     text = path.read_text(encoding='utf-8')
     lines = text.splitlines(keepends=True)
     token_iter = iter(lines).__next__
     tokens = list(tokenize.generate_tokens(token_iter))
     changed = False
-    out_parts = []
+    out_parts = list()
     for tok in tokens:
         if tok.type == tokenize.NAME and tok.string in mapping:
             out_parts.append(mapping[tok.string])
@@ -36,11 +37,8 @@ def rename_in_file(path: pathlib.Path, mapping: dict[str, str]) -> None:
 def main() -> None:
     """
     Rename variables across project files according to the mapping table.
-
-    Returns:
-        None
     """
-    file_renames: dict[str, dict[str, str]] = {
+    file_renames: typing.Dict[str, typing.Dict[str, str]] = {
         'preprocessing/convert_npy.py': {
             'forecast_reference_time': 'forecast_ref_time',
         },
@@ -153,7 +151,7 @@ def main() -> None:
     for rel_path, mapping in file_renames.items():
         file_path = pathlib.Path(rel_path)
         if file_path.exists():
-            rename_in_file(file_path, mapping)
+            _rename_in_file(file_path, mapping)
             print(f'renamed in {file_path}')
         else:
             print(f'missing {file_path}')

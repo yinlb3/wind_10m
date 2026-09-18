@@ -1,10 +1,9 @@
-#!user/bin.python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 """
 Founded in 2024-07-27
-Modified in 2026-09-15
-@author: yinlb
+Modified in 2026-09-17
+@author: yinlb, deepseek-flash
 """
 
 import os
@@ -13,9 +12,8 @@ import typing
 
 import arrow
 import numpy as np
-import pandas as pd
-import seaborn as sb
 from matplotlib import pyplot as plt
+
 from src import utils
 
 
@@ -116,7 +114,9 @@ def _get_community(node_ind: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-    """Run graph-based community detection on the station RMSE matrix."""
+    """
+    Run graph-based community detection on the station RMSE matrix.
+    """
     # 1. Load configuration and input data.
     cfg = utils.load_config()
     project_wind = pathlib.Path(cfg['paths']['project_wind'])
