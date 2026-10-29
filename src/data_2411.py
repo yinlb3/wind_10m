@@ -207,7 +207,9 @@ def station_ids(cfg: dict) -> typing.List[str]:
     return sorted(have_data & have_obs)
 
 
-def factor_columns(cfg: dict) -> typing.Tuple[typing.List[int], typing.List[str]]:
+def factor_columns(
+    cfg: dict
+) -> typing.Tuple[typing.List[int], typing.List[str]]:
     """
     Return the factor column indices and their names.
 

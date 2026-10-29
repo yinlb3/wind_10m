@@ -167,7 +167,10 @@ def scores(
         (~np.isnan(ob_dir)) & (~np.isnan(pr_dir))
         & (ob_dir != 999017) & (pr_dir != 999017)
     )
-    delta = pr_dir[mask_dir].astype(np.float64) - ob_dir[mask_dir].astype(np.float64)
+    delta = (
+        pr_dir[mask_dir].astype(np.float64)
+        - ob_dir[mask_dir].astype(np.float64)
+    )
     delta = (delta + 180.0) % 360.0 - 180.0
     out['wd_mae'] = float(np.mean(np.abs(delta)))
     out['wd_rmse'] = float(np.sqrt(np.mean(delta ** 2)))
