@@ -428,7 +428,10 @@ def group_rmse(
         np.ndarray: RMSE per group.
     """
     diff = pred - obs
-    lab = np.broadcast_to(label, diff.shape)
+    lab = label
+    while lab.ndim < diff.ndim:
+        lab = lab[..., None]
+    lab = np.broadcast_to(lab, diff.shape)
     out = np.full(n_group, np.nan, dtype=np.float64)
     valid = ~np.isnan(diff)
     for group in range(n_group):
