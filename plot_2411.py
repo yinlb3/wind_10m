@@ -26,6 +26,9 @@ MODELS = ['ECMWF-IFS', 'PDFM', 'MLR', 'LightGBM-A', 'LightGBM-B']
 COLORS = ['#1f77b4', '#2ca02c', '#bcbd22', '#d62728', '#9467bd']
 SECTORS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 DPI = 300
+# Below this station count the station-wise distribution and the high speed
+# grades are not representative, so the figures are marked as provisional.
+MIN_STATIONS = 50
 
 
 def _read(path: pathlib.Path) -> typing.Optional[pd.DataFrame]:
@@ -90,6 +93,12 @@ def plot_ts(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
         if row.empty:
             continue
         values = row[columns].to_numpy(dtype=float).ravel()
+        missing = [i + 1 for i, v in enumerate(values) if np.isnan(v)]
+        if missing:
+            print(
+                '  {0}: no samples at grade {1}'.format(model, missing),
+                flush=True,
+            )
         axis.bar(
             x=x_val + (index - 2) * width, height=values, width=width,
             color=COLORS[index], label=model,
@@ -182,6 +191,17 @@ def plot_station(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     wd = _read(result_dir / 'group_station_wd_rmse.csv')
     if ws is None or wd is None:
         return
+    n_station = ws.shape[0]
+    if n_station < MIN_STATIONS:
+        stale = fig_dir / 'fig4_station_violin.jpg'
+        if stale.exists():
+            stale.unlink()
+        print(
+            '  skipped: only {0} stations, need >= {1} for a violin plot '
+            '(stale figure removed)'.format(n_station, MIN_STATIONS),
+            flush=True,
+        )
+        return
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     for axis, table, label in (
@@ -267,6 +287,17 @@ def main() -> None:
     result_dir = pathlib.Path(cfg['paths']['result_dir'])
     fig_dir = result_dir / 'figures'
     fig_dir.mkdir(parents=True, exist_ok=True)
+
+    station_table = _read(result_dir / 'group_station_ws_rmse.csv')
+    n_station = 0 if station_table is None else station_table.shape[0]
+    if n_station < MIN_STATIONS:
+        print(
+            'WARNING: only {0} stations; figures are provisional - the '
+            'high speed grades and the station distribution are not '
+            'representative until the full run finishes'.format(n_station),
+            flush=True,
+        )
+
     for func in (
         plot_mi, plot_ts, plot_rmse_panels, plot_station, plot_radar
     ):
