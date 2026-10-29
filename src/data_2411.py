@@ -552,7 +552,9 @@ def save_cache(sta: str, cfg: dict, arrays: dict) -> pathlib.Path:
     """
     path = cache_path(sta, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, **arrays)
+    # Uncompressed npz: float32 factors compress poorly, and decompression
+    # dominates training I/O when 2233 files are read six times.
+    np.savez(path, **arrays)
     return path
 
 
