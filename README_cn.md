@@ -113,6 +113,31 @@ wind_10m/
 └── AGENTS.md
 ```
 
+## 2411 站实验复现
+
+2411 站数据已是站点级 numpy 数组，不再需要 `extract_ec.py` / `convert_npy.py` / `extract_obs.py`。
+
+```bash
+# 0. 环境：C:\ProgramData\miniconda3\envs\meteva\python.exe（Python 3.11）
+pip install -r requirements.txt
+
+# 1. 建站点缓存（约 6 min，占 D:\data\2411\cache 约 30 GB）
+python build_cache_2411.py
+
+# 2. 训练 5 个模型，6 折留一年（约 5 h）
+python train_2411.py
+
+# 3. 输出检验表到 docs/results
+python verify_2411.py
+
+# 4. 互信息矩阵与出图
+python compute_mi_2411.py
+python plot_2411.py
+```
+
+本机路径放 `config/config.2411.local.yaml`（Git 忽略），共享配置在
+`config/config.2411.yaml`。步骤清单与验收标准见 `docs/repro-2411_cn.md`。
+
 ## 许可证
 
 这是一个内部研究项目，不提供公共许可证。

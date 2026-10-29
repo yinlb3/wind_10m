@@ -113,6 +113,33 @@ wind_10m/
 └── AGENTS.md
 ```
 
+## Reproducing the 2411-station experiment
+
+The 2411-station dataset is already stored as per-station numpy arrays, so the
+`extract_ec.py` / `convert_npy.py` / `extract_obs.py` stages are not needed.
+
+```bash
+# 0. Environment: C:\ProgramData\miniconda3\envs\meteva\python.exe (Python 3.11)
+pip install -r requirements.txt
+
+# 1. Build per-station caches (~6 min, ~30 GB under D:\data\2411\cache)
+python build_cache_2411.py
+
+# 2. Train five models over six leave-one-year-out folds (~5 h)
+python train_2411.py
+
+# 3. Write the verification tables to docs/results
+python verify_2411.py
+
+# 4. Mutual-information matrix and figures
+python compute_mi_2411.py
+python plot_2411.py
+```
+
+Local paths live in `config/config.2411.local.yaml` (ignored by Git); the
+shared settings are in `config/config.2411.yaml`. Details and checklists:
+`docs/repro-2411_cn.md`.
+
 ## License
 
 This is an internal research project. No public license is provided.

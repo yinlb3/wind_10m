@@ -96,6 +96,24 @@ python access.py
 # or python access97_sc.py
 ```
 
+### 2411-station pipeline (current experiment)
+
+The 2411-station dataset is already stored as per-station numpy arrays, so the
+extraction and CSV-to-npy stages are skipped.
+
+```bash
+python build_cache_2411.py     # per-station caches, ~6 min, ~30 GB
+python train_2411.py           # 6 folds x 5 models, ~5 h
+python verify_2411.py          # tables -> docs/results
+python compute_mi_2411.py      # mutual-information matrix
+python plot_2411.py            # figures -> docs/results/figures
+```
+
+Interpreter: `C:\ProgramData\miniconda3\envs\meteva\python.exe` (Python 3.11).
+Shared settings: `config/config.2411.yaml`; local paths:
+`config/config.2411.local.yaml` (ignored by Git). Checklist:
+`docs/repro-2411_cn.md`.
+
 ### Before running
 
 - Ensure `config/config.local.windows.yaml` or `config/config.local.linux.yaml` contains valid local paths.

@@ -1,0 +1,19 @@
+# Pinned dependency versions of the working environment (Python 3.11).
+# Install with: pip install -r requirements.txt
+numpy==2.4.6
+pandas==3.0.6
+arrow==1.4.0
+PyYAML==6.0.3
+lightgbm==4.7.0
+scikit-learn==1.9.1
+matplotlib==3.11.2
+scipy==1.17.1
+joblib==1.6.0
+
+# Verification package, installed in editable mode from the local checkout.
+meteva==1.9.6.1
+# CMADaaS download helper, only needed by download_obs.py.
+nmc_met_io==0.1.17.0
+
+# Optional: PyTorch demo models (avt/cnn/dnn/emd/gn/ots/transformer).
+# torch>=2.0
