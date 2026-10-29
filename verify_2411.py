@@ -456,6 +456,15 @@ def main(
     slices = data_2411.year_slices(cfg)
     years = sorted(slices.keys())
     selected = tuple(models) if models else MODELS
+    unknown = [name for name in selected if name not in MODELS]
+    if unknown:
+        print(
+            'Unknown model: {0}; valid: {1}'.format(
+                ', '.join(unknown), ', '.join(MODELS)
+            ),
+            flush=True,
+        )
+        return
     marker = float(cfg['obs']['calm_marker'])
     labels = time_labels(cfg)
     result_dir = pathlib.Path(cfg['paths']['result_dir'])

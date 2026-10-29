@@ -16,7 +16,6 @@ Modified in 2026-10-29
 import pathlib
 import typing
 
-import arrow
 import numpy as np
 import pandas as pd
 import yaml
@@ -267,7 +266,10 @@ def load_factors(sta: str, cfg: dict) -> np.ndarray:
     if cfg['features']['precip']:
         steps = time_steps(cfg)[first:last + 1].astype(np.float32)
         pos = cols.index(COL_PRECIP)
-        block[:, :, pos] = block[:, :, pos] * 1000.0 / steps[None, :]
+        # Precipitation is non-negative; small negative values come from the
+        # source field and are clipped to zero before the unit conversion.
+        precip = np.maximum(block[:, :, pos], 0.0)
+        block[:, :, pos] = precip * 1000.0 / steps[None, :]
 
     return np.einsum('nlf,hl->nhf', block, weights).astype(np.float32)
 

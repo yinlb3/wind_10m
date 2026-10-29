@@ -10,12 +10,13 @@ paths:
   result_dir: '<RESULT_2411_DIR>'   # e.g. docs\results
 
 constants:
+  # Documented year range; the actual sample grid is derived from start_time
+  # and n_samples so that leap years are handled automatically.
   years: [2019, 2020, 2021, 2022, 2023, 2024]
   n_samples: 4384                   # 6 years x 730 forecast cycles
   n_leads: 52                       # lead-time slots in data{sta}.npy
   start_time: '2019-01-01 00:00:00' # UTC, first forecast initial time
   cycle_hours: 12                   # one forecast cycle every 12 h
-  n_stations: 2233                  # intersection of data and sta
 
 # Lead-time layout of the 52 slots in data{sta}.npy
 lead:
@@ -26,14 +27,12 @@ lead:
   seg_b_step: 6
   begin_hour: 12                    # evaluation window start (hour)
   end_hour: 36                      # evaluation window end (hour, inclusive)
-  n_hours: 24                       # hourly output steps (13..36 h)
 
 # Factor layout of data{sta}.npy (31 columns)
 features:
   surface: ['2T', 'MSL', '2D', '10U', '10V']
   precip: true                      # column 5, converted to mm/h
   levels: [1000, 925, 850, 700]     # 500 hPa is missing in this dataset
-  level_vars: ['T', 'GH', 'RH', 'U', 'V']
 
 # Observation cleaning
 obs:
