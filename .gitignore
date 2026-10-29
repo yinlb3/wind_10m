@@ -70,3 +70,12 @@ rules/
 # Temporary folders
 temp/
 tmp/
+
+# Documents (not in git)
+*.docx
+*.doc
+*.pdf
+*.pptx
+*.ppt
+*.xlsx
+*.xls

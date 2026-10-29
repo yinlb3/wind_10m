@@ -1,0 +1,51 @@
+# Configuration for the 2411-station experiment (2019-2024).
+# The raw data are per-station numpy arrays plus per-station observation CSVs;
+# no extraction or CSV-to-npy conversion step is required.
+
+paths:
+  data_dir: '<DATA_2411_DIR>'       # e.g. D:\data\2411  (data{sta}.npy)
+  sta_dir: '<STA_2411_DIR>'         # e.g. D:\data\2411\sta  ({sta}.csv + 2024\{sta}.csv)
+  cache_dir: '<CACHE_2411_DIR>'     # e.g. D:\data\2411\cache
+  pred_dir: '<PRED_2411_DIR>'       # e.g. D:\Project\wind\pred2411
+  result_dir: '<RESULT_2411_DIR>'   # e.g. docs\results
+
+constants:
+  years: [2019, 2020, 2021, 2022, 2023, 2024]
+  n_samples: 4384                   # 6 years x 730 forecast cycles
+  n_leads: 52                       # lead-time slots in data{sta}.npy
+  start_time: '2019-01-01 00:00:00' # UTC, first forecast initial time
+  cycle_hours: 12                   # one forecast cycle every 12 h
+  n_stations: 2233                  # intersection of data and sta
+
+# Lead-time layout of the 52 slots in data{sta}.npy
+lead:
+  seg_a_start: 3                     # t = 0..23  -> 3, 6, ..., 72 h
+  seg_a_step: 3
+  seg_a_count: 24
+  seg_b_start: 78                   # t = 24..51 -> 78, 84, ..., 240 h
+  seg_b_step: 6
+  begin_hour: 12                    # evaluation window start (hour)
+  end_hour: 36                      # evaluation window end (hour, inclusive)
+  n_hours: 24                       # hourly output steps (13..36 h)
+
+# Factor layout of data{sta}.npy (31 columns)
+features:
+  surface: ['2T', 'MSL', '2D', '10U', '10V']
+  precip: true                      # column 5, converted to mm/h
+  levels: [1000, 925, 850, 700]     # 500 hPa is missing in this dataset
+  level_vars: ['T', 'GH', 'RH', 'U', 'V']
+
+# Observation cleaning
+obs:
+  calm_marker: 999017
+  miss_threshold: 999990
+  max_speed: 1000.0
+  calm_speed: 0.3
+  max_jump: 10.0
+
+model:
+  random_seed: 20230718
+  lgb_n_jobs: -1
+  # The remaining LightGBM parameters stay at library defaults, matching the
+  # original experiments; they are recorded here for reproducibility.
+  lgb_params: {}
