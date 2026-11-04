@@ -245,7 +245,8 @@ def time_labels(cfg: dict) -> typing.Dict[str, np.ndarray]:
     """
     times = data_2411.sample_times(cfg)
     n_sample = int(cfg['constants']['n_samples'])
-    month = times.month.to_numpy().reshape(n_sample, 24)
+    # months arrive as 1-12, but group_rmse expects zero-based group ids.
+    month = times.month.to_numpy().reshape(n_sample, 24) - 1
     hour = times.hour.to_numpy().reshape(n_sample, 24)
     lead = np.broadcast_to(np.arange(24), (n_sample, 24)).copy()
     return {'month': month, 'hour': hour, 'lead': lead}
@@ -277,6 +278,9 @@ class ScoreAcc(object):
         self.s_wabs = 0.0
         self.s_wsq = 0.0
         self.cm_wd = np.zeros((N_DIR, N_DIR), dtype=np.float64)
+        self.cm_wd_grade = np.zeros(
+            (N_GRADE, N_DIR, N_DIR), dtype=np.float64
+        )
 
     def add(
         self, ob_dir: np.ndarray, ob_spd: np.ndarray,
@@ -326,6 +330,14 @@ class ScoreAcc(object):
         self.s_wabs += float(np.sum(np.abs(delta)))
         self.s_wsq += float(np.sum(delta ** 2))
         self.cm_wd += confusion(dir_grade(ob_dir), dir_grade(pr_dir), N_DIR)
+        ob_grade = speed_grade(ob_spd)
+        for grade in range(N_GRADE):
+            in_grade = ob_grade == grade
+            if in_grade.any():
+                self.cm_wd_grade[grade] += confusion(
+                    dir_grade(ob_dir[in_grade]),
+                    dir_grade(pr_dir[in_grade]), N_DIR,
+                )
 
     def result(self) -> typing.Dict[str, float]:
         """
@@ -441,6 +453,35 @@ def group_rmse(
     return out
 
 
+def group_dir_rmse(
+    ob_dir: np.ndarray, pr_dir: np.ndarray, label: np.ndarray,
+    n_group: int, marker: float = 999017.0,
+) -> np.ndarray:
+    """
+    Compute the circular direction RMSE for every group of a label array.
+
+    Args:
+        ob_dir: Observed direction.
+        pr_dir: Predicted direction.
+        label: Group labels, either the same shape as the data or
+            broadcastable to it.
+        n_group: Number of groups.
+        marker: Calm-wind direction marker.
+
+    Returns:
+        np.ndarray: Direction RMSE per group.
+    """
+    delta = (
+        pr_dir.astype(np.float64) - ob_dir.astype(np.float64) + 180.0
+    ) % 360.0 - 180.0
+    valid = (
+        (~np.isnan(ob_dir)) & (~np.isnan(pr_dir))
+        & (ob_dir != marker) & (pr_dir != marker)
+    )
+    delta = np.where(valid, delta, np.nan)
+    return group_rmse(np.zeros_like(delta), delta, label, n_group)
+
+
 def main(
     limit: int = 0,
     models: typing.Optional[typing.Sequence[str]] = None,
@@ -476,6 +517,9 @@ def main(
     total = {name: ScoreAcc(marker) for name in selected}
     rows_year = list()
     grouped = {name: {'month': [], 'hour': [], 'lead': []} for name in selected}
+    grouped_dir = {
+        name: {'month': [], 'hour': [], 'lead': []} for name in selected
+    }
     sta_ws = {name: list() for name in selected}
     sta_wd = {name: list() for name in selected}
     sector = {name: list() for name in selected}
@@ -503,6 +547,9 @@ def main(
                 lab = labels[key][start:end, :, None]
                 grouped[name][key].append(
                     group_rmse(ob_spd, pr_spd, lab, n_group)
+                )
+                grouped_dir[name][key].append(
+                    group_dir_rmse(ob_dir, pr_dir, lab, n_group, marker)
                 )
             sta_ws[name].append(
                 np.sqrt(np.nanmean((pr_spd - ob_spd) ** 2, axis=(0, 1)))
@@ -542,16 +589,53 @@ def main(
         result_dir / 'table4_ab.csv', index=False, encoding='utf-8-sig'
     )
 
+    grade_data = {}
+    count_data = {}
+    for name in selected:
+        if name not in found:
+            continue
+        grade_data[name] = [
+            oa_kappa(matrix)[1]
+            for matrix in total[name].cm_wd_grade[1:]
+        ]
+        count_data[name] = [
+            float(matrix.sum()) for matrix in total[name].cm_wd_grade[1:]
+        ]
+    if grade_data:
+        index = range(1, N_GRADE)
+        pd.DataFrame(
+            grade_data, index=index
+        ).to_csv(
+            result_dir / 'group_grade_wd_kappa.csv',
+            index_label='grade', encoding='utf-8-sig'
+        )
+        pd.DataFrame(
+            count_data, index=index
+        ).to_csv(
+            result_dir / 'group_grade_wd_count.csv',
+            index_label='grade', encoding='utf-8-sig'
+        )
+
     for key in ('month', 'hour', 'lead'):
         data = {}
+        dir_data = {}
         for name in selected:
             if grouped[name][key]:
                 data[name] = safe_nanmean(
                     np.vstack(grouped[name][key]), axis=0
                 )
+            if grouped_dir[name][key]:
+                dir_data[name] = safe_nanmean(
+                    np.vstack(grouped_dir[name][key]), axis=0
+                )
         if data:
             pd.DataFrame(data).to_csv(
                 result_dir / 'group_{0}_rmse.csv'.format(key),
+                index_label='group', encoding='utf-8-sig'
+            )
+        if dir_data:
+            pd.DataFrame(dir_data).to_csv(
+                result_dir / 'group_{0}_dir_rmse.csv'.format(key),
                 index_label='group', encoding='utf-8-sig'
             )
 
