@@ -9,8 +9,8 @@ observations, interpolates the 3-hourly factors to hourly values inside the
 evaluation window and encodes wind direction as (speed, sin, cos).
 
 Founded in 2026-10-29
-Modified in 2026-10-29
-@author: yinlb, deepseek-flash
+Modified in 2026-11-19
+@author: yinlb
 """
 
 import pathlib
@@ -113,60 +113,52 @@ def lead_hours(cfg: dict) -> np.ndarray:
 
 def target_hours(cfg: dict) -> np.ndarray:
     """
-    Return the hourly hours inside the evaluation window.
+    Return the target hours inside the evaluation window.
+
+    In mode 24 the window is 13-36 h at 1 h steps (24 values); in mode 240
+    it spans 3-240 h at 3 h steps (80 values).
 
     Args:
         cfg: Configuration dictionary.
 
     Returns:
-        np.ndarray: Hours from begin_hour + 1 to end_hour, inclusive.
+        np.ndarray: Target hours.
     """
-    begin = cfg['lead']['begin_hour']
-    end = cfg['lead']['end_hour']
-    return np.arange(begin + 1, end + 1, dtype=np.float64)
+    lead = cfg['lead']
+    if int(lead['mode']) == 24:
+        begin = lead['begin_hour']
+        end = lead['end_hour']
+        return np.arange(begin + 1, end + 1, dtype=np.float64)
+    start = lead['grid_start']
+    end = lead['grid_end']
+    step = lead['grid_step']
+    return np.arange(start, end + step, step, dtype=np.float64)
 
 
-def _slot_slice(cfg: dict) -> typing.Tuple[int, int]:
+def grid_weights(cfg: dict) -> np.ndarray:
     """
-    Return the first and last lead-time slot covering the evaluation window.
+    Build the interpolation weights for the active target grid.
+
+    The target hours come from ``target_hours``: 24 hourly hours in mode 24
+    and 80 three-hourly hours in mode 240. Weights are computed against the
+    full 52-slot source so that both modes share one implementation.
 
     Args:
         cfg: Configuration dictionary.
 
     Returns:
-        typing.Tuple[int, int]: First and last slot index (inclusive).
+        np.ndarray: Weight matrix with shape (n_target, 52), float32.
     """
     src = lead_hours(cfg)
     tgt = target_hours(cfg)
-    first = int(np.searchsorted(src, tgt[0], side='right') - 1)
-    last = int(np.searchsorted(src, tgt[-1], side='right') - 1)
-    return max(first, 0), min(last, len(src) - 1)
-
-
-def interp_weights(cfg: dict) -> typing.Tuple[np.ndarray, int, int]:
-    """
-    Build the linear interpolation weights from slots to target hours.
-
-    Args:
-        cfg: Configuration dictionary.
-
-    Returns:
-        typing.Tuple[np.ndarray, int, int]: Weight matrix with shape
-        (n_target, n_slot_used), the first slot index and the last slot
-        index (inclusive).
-    """
-    src = lead_hours(cfg)
-    tgt = target_hours(cfg)
-    first, last = _slot_slice(cfg)
-    used = src[first:last + 1]
-    weights = np.zeros((len(tgt), len(used)), dtype=np.float32)
-    for i, hour in enumerate(tgt):
-        j = int(np.searchsorted(used, hour, side='right') - 1)
-        j = min(max(j, 0), len(used) - 2)
-        frac = (hour - used[j]) / (used[j + 1] - used[j])
-        weights[i, j] = 1.0 - frac
-        weights[i, j + 1] = frac
-    return weights, first, last
+    weights = np.zeros((tgt.size, src.size), dtype=np.float32)
+    for index, hour in enumerate(tgt):
+        left = int(np.searchsorted(src, hour, side='right') - 1)
+        left = min(max(left, 0), src.size - 2)
+        frac = (hour - src[left]) / (src[left + 1] - src[left])
+        weights[index, left] = 1.0 - frac
+        weights[index, left + 1] = frac
+    return weights
 
 
 def time_steps(cfg: dict) -> np.ndarray:
@@ -188,7 +180,7 @@ def time_steps(cfg: dict) -> np.ndarray:
     return np.concatenate([step_a, step_b])
 
 
-def station_ids(cfg: dict) -> typing.List[str]:
+def available_station_ids(cfg: dict) -> typing.List[str]:
     """
     Return the station IDs that have both factor data and observations.
 
@@ -204,6 +196,39 @@ def station_ids(cfg: dict) -> typing.List[str]:
     have_data = {p.stem[prefix:] for p in data_dir.glob('data*.npy')}
     have_obs = {p.stem for p in sta_dir.glob('*.csv')}
     return sorted(have_data & have_obs)
+
+
+def station_ids(cfg: dict) -> typing.List[str]:
+    """
+    Return the station IDs used by training and verification.
+
+    When ``paths.station_list`` is set, only IDs in that required QC list are
+    kept. Leave it unset only for an intentional unfiltered experiment.
+
+    Args:
+        cfg: Configuration dictionary.
+
+    Returns:
+        typing.List[str]: Sorted station IDs.
+
+    Raises:
+        FileNotFoundError: If the configured QC station list is missing.
+    """
+    station_all = available_station_ids(cfg)
+    list_path = cfg['paths'].get('station_list')
+    if list_path:
+        path = pathlib.Path(list_path)
+        if not path.exists():
+            raise FileNotFoundError(
+                'QC station list not found: {0}. Run qc_stations_2411.py '
+                'first or unset paths.station_list intentionally.'.format(path)
+            )
+        with open(path, 'r', encoding='utf-8') as file_handle:
+            keep = {
+                line.strip() for line in file_handle if line.strip()
+            }
+        station_all = [sta for sta in station_all if sta in keep]
+    return station_all
 
 
 def factor_columns(
@@ -260,11 +285,11 @@ def load_factors(sta: str, cfg: dict) -> np.ndarray:
     data_dir = pathlib.Path(cfg['paths']['data_dir'])
     raw = np.load(data_dir / 'data{0}.npy'.format(sta))
     cols, _ = factor_columns(cfg)
-    weights, first, last = interp_weights(cfg)
+    weights = grid_weights(cfg)
 
-    block = raw[:, first:last + 1, :][:, :, cols].astype(np.float32)
+    block = raw[:, :, cols].astype(np.float32)
     if cfg['features']['precip']:
-        steps = time_steps(cfg)[first:last + 1].astype(np.float32)
+        steps = time_steps(cfg).astype(np.float32)
         pos = cols.index(COL_PRECIP)
         # Precipitation is non-negative; small negative values come from the
         # source field and are clipped to zero before the unit conversion.
@@ -329,8 +354,8 @@ def clean_wind(
     """
     obs = cfg['obs']
     marker = obs['calm_marker']
-    dir_val = np.asarray(direction, dtype=np.float64).copy()
-    spd_val = np.asarray(speed, dtype=np.float64).copy()
+    dir_val = np.asarray(direction, dtype=np.float32).copy()
+    spd_val = np.asarray(speed, dtype=np.float32).copy()
 
     calm_raw = dir_val == marker
     dir_miss = (dir_val >= obs['miss_threshold']) & ~calm_raw
@@ -436,7 +461,7 @@ def load_obs(
         frame['WIN_S_Avg_10mi'].values,
         cfg,
     )
-    pre_val = frame['PRE_1h'].to_numpy(dtype=np.float64, copy=True)
+    pre_val = frame['PRE_1h'].to_numpy(dtype=np.float32, copy=True)
     pre_val[pre_val >= cfg['obs']['miss_threshold']] = np.nan
 
     times = sample_times(cfg)
@@ -540,6 +565,77 @@ def cache_path(sta: str, cfg: dict) -> pathlib.Path:
         pathlib.Path: Cache file path.
     """
     return pathlib.Path(cfg['paths']['cache_dir']) / 'cache{0}.npz'.format(sta)
+
+
+def mode_suffix(cfg: dict) -> str:
+    """
+    Return the output-name suffix of the active lead-time mode.
+
+    Args:
+        cfg: Configuration dictionary.
+
+    Returns:
+        str: '' for mode 24 and '_240' for mode 240.
+    """
+    return '' if int(cfg['lead']['mode']) == 24 else '_240'
+
+
+def pred_root(cfg: dict) -> pathlib.Path:
+    """
+    Return the prediction directory of the active mode.
+
+    Mode 240 writes to a sibling directory, so the main-experiment predictions
+    are never overwritten.
+
+    Args:
+        cfg: Configuration dictionary.
+
+    Returns:
+        pathlib.Path: Prediction directory.
+    """
+    base = pathlib.Path(cfg['paths']['pred_dir'])
+    suffix = mode_suffix(cfg)
+    return base if not suffix else base.parent / (base.name + suffix)
+
+
+def result_root(cfg: dict) -> pathlib.Path:
+    """
+    Return the result directory of the active mode.
+
+    Args:
+        cfg: Configuration dictionary.
+
+    Returns:
+        pathlib.Path: Result directory.
+    """
+    base = pathlib.Path(cfg['paths']['result_dir'])
+    suffix = mode_suffix(cfg)
+    return base if not suffix else base.parent / (base.name + suffix)
+
+
+def load_arrays(sta: str, cfg: dict) -> typing.Optional[dict]:
+    """
+    Return the station arrays for the active target grid.
+
+    The cached npz is reused only when its hour axis matches the active mode;
+    otherwise the arrays are rebuilt from the raw factor file and the
+    observation CSV, so one cache directory can serve both modes.
+
+    Args:
+        sta: Station ID.
+        cfg: Configuration dictionary.
+
+    Returns:
+        typing.Optional[dict]: Arrays with keys 'x', 'y', 'uv', 'dir', 'spd'
+        and 'pre', or None when observations are unavailable.
+    """
+    path = cache_path(sta, cfg)
+    n_hour = int(target_hours(cfg).size)
+    if path.exists():
+        with np.load(path) as data:
+            if data['x'].shape[1] == n_hour:
+                return {key: data[key] for key in data.files}
+    return build_station(sta, cfg)
 
 
 def save_cache(sta: str, cfg: dict, arrays: dict) -> pathlib.Path:

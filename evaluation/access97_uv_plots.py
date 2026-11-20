@@ -4,7 +4,7 @@ Plotting helpers for evaluation/access97_uv.py.
 
 Founded in 2026-07-22
 Modified in 2026-09-18
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import pathlib

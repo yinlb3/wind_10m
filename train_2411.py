@@ -7,15 +7,14 @@ For every leave-one-year-out fold and every station, fit five models:
 the raw ECMWF-IFS wind (no training), a quantile-mapping PDFM baseline,
 a multiple linear regression baseline, the angular-encoding LightGBM and
 the vector-decomposition LightGBM. Predictions are written as
-(direction, speed) arrays with shape (n_samples, 24, n_stations, 2).
+(direction, speed) arrays with shape (n_samples, n_hours, n_stations, 2).
 
 Founded in 2026-10-29
-Modified in 2026-10-29
-@author: yinlb, deepseek-flash
+Modified in 2026-11-19
+@author: yinlb
 """
 
 import argparse
-import pathlib
 import time
 import typing
 
@@ -208,14 +207,21 @@ def process_station(
     if 'ECMWF-IFS' in selected and ec_mask.any():
         result['ECMWF-IFS'][ec_mask] = uv_to_ds(te_x[ec_mask][:, 3:5], marker)
 
-    # Calm samples carry NaN in the cosine slot, so they are excluded here.
-    tr_mask = (~np.isnan(tr_x).any(axis=2)) & (~np.isnan(tr_y).any(axis=2))
-    if tr_mask.sum() < 100 or not te_mask.any():
+    # Each (sample, lead time) pair is one training row, so a missing slot
+    # no longer discards the whole sample.
+    fx_flat = tr_x.reshape(-1, tr_x.shape[-1])
+    sc_flat = tr_y.reshape(-1, tr_y.shape[-1])
+    uv_flat = tr_uv.reshape(-1, tr_uv.shape[-1])
+    keep_fx = ~np.isnan(fx_flat).any(axis=1)
+    keep_sc = keep_fx & ~np.isnan(sc_flat).any(axis=1)
+    keep_uv = keep_fx & ~np.isnan(uv_flat).any(axis=1)
+    if keep_sc.sum() < 100 or not te_mask.any():
         return result
 
-    fx_tr = tr_x[tr_mask]
-    sc_tr = tr_y[tr_mask]
-    uv_tr = tr_uv[tr_mask]
+    fx_tr = fx_flat[keep_sc]
+    sc_tr = sc_flat[keep_sc]
+    uv_tr = uv_flat[keep_uv]
+    fx_uv = fx_flat[keep_uv]
     fx_te = te_x[te_mask]
 
     if 'PDFM' in selected:
@@ -238,7 +244,7 @@ def process_station(
         )
 
     if 'LightGBM-B' in selected:
-        uv_models = fit_lgb(fx_tr, uv_tr, cfg)
+        uv_models = fit_lgb(fx_uv, uv_tr, cfg)
         result['LightGBM-B'][te_mask] = uv_to_ds(
             predict_multi(uv_models, fx_te), marker
         )
@@ -249,6 +255,7 @@ def main(
     limit: int = 0,
     folds: int = 0,
     models: typing.Optional[typing.Sequence[str]] = None,
+    years_wanted: typing.Optional[typing.Sequence[int]] = None,
 ) -> None:
     """
     Train and predict all folds.
@@ -257,6 +264,7 @@ def main(
         limit: Number of stations to process (0 means all).
         folds: Number of folds to run (0 means all).
         models: Model names to run (None means all).
+        years_wanted: Held-out years to run (None means all folds).
     """
     cfg = data_2411.load_config()
     station_ids = data_2411.station_ids(cfg)
@@ -279,7 +287,7 @@ def main(
             flush=True,
         )
         return
-    pred_dir = pathlib.Path(cfg['paths']['pred_dir'])
+    pred_dir = data_2411.pred_root(cfg)
     pred_dir.mkdir(parents=True, exist_ok=True)
 
     print(
@@ -289,22 +297,25 @@ def main(
         flush=True,
     )
 
+    n_hour = int(data_2411.target_hours(cfg).size)
     for fold_index, year in enumerate(years):
         if folds and fold_index >= folds:
             break
+        if years_wanted and year not in years_wanted:
+            continue
         start, end = slices[year]
         train_index = np.concatenate([
             np.arange(*slices[other]) for other in years if other != year
         ])
         n_year = end - start
         output = {
-            name: np.full((n_year, 24, n_station, 2), np.nan, np.float32)
+            name: np.full((n_year, n_hour, n_station, 2), np.nan, np.float32)
             for name in selected
         }
         fold_start = time.time()
 
         for index, sta in enumerate(station_ids, 1):
-            arr = data_2411.load_cache(sta, cfg)
+            arr = data_2411.load_arrays(sta, cfg)
             if arr is None:
                 continue
             result = process_station(
@@ -349,6 +360,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--folds', type=int, default=0)
     parser.add_argument('--models', type=str, default='')
+    parser.add_argument(
+        '--years', type=str, default='',
+        help='Comma-separated held-out years (empty means every fold)'
+    )
     return parser.parse_args()
 
 
@@ -358,5 +373,13 @@ if __name__ == '__main__':
     model_list = [
         item.strip() for item in args.models.split(',') if item.strip()
     ]
-    main(limit=args.limit, folds=args.folds, models=model_list or None)
+    year_list = [
+        int(item.strip()) for item in args.years.split(',') if item.strip()
+    ]
+    main(
+        limit=args.limit,
+        folds=args.folds,
+        models=model_list or None,
+        years_wanted=year_list or None,
+    )
 

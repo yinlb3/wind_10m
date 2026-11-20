@@ -37,6 +37,17 @@ This project post-processes ECMWF numerical weather prediction (NWP) products to
 ```
 wind_10m/
 ├── config/                  # YAML configuration files
+├── build_cache_2411.py      # Build caches for all available 2411-dataset stations
+├── qc_stations_2411.py      # Station QC and the required kept-station list
+├── train_2411.py            # Six-fold, five-model training (2187 QC stations)
+├── verify_2411.py           # Common-sample tables and grouped verification
+├── compute_mi_2411.py       # Mutual-information matrix
+├── plot_2411.py             # Result figures
+├── plot_stations.py         # Station distribution map
+├── src/data_2411.py         # 2411-dataset access, cleaning and station selection
+├── src/window.py            # Lead-time interpolation for the 10-day product
+├── benchmark_schemes.py     # Four-scheme comparison (tables 6/7)
+├── predict_10day.py         # 10-day 3-hourly wind product
 ├── download_obs.py          # Download per-station obs CSVs from CMADaaS
 ├── extract_ec.py            # Extract EC forecast data to stations
 ├── extract_obs.py           # Convert raw per-station obs CSVs to npy
@@ -102,17 +113,38 @@ The 2411-station dataset is already stored as per-station numpy arrays, so the
 extraction and CSV-to-npy stages are skipped.
 
 ```bash
-python build_cache_2411.py     # per-station caches, ~6 min, ~30 GB
+python build_cache_2411.py     # all 2233 available stations, ~6 min, ~30 GB
+python qc_stations_2411.py     # keep 2187 stations and write the QC list
 python train_2411.py           # 6 folds x 5 models, ~5 h
-python verify_2411.py          # tables -> docs/results
+python verify_2411.py          # tables -> docs/results/tables
 python compute_mi_2411.py      # mutual-information matrix
 python plot_2411.py            # figures -> docs/results/figures
 ```
 
+**Smoke vs full run** (extension scripts): running `predict_10day.py` or
+`benchmark_schemes.py` with no arguments is a full run over all 2187 stations
+and all six folds, and only its outputs count as results; any invocation with
+`--limit > 0`, `--subset > 0`, or `--years` covering fewer than six folds is a
+smoke check whose outputs are discarded and never reported.
+
+### 240 h window (optional)
+
+Set `lead.mode: 240` in `config/config.2411.yaml` (3-240 h, 80 slots) and keep
+`lead.mode: 24` for the main experiment. Mode 240 writes to `pred_240/` and
+`results_240/`, so the 24-slot predictions and tables are never overwritten.
+
+```bash
+python train_2411.py           # -> artifacts/2411/pred_240
+python verify_2411.py          # -> docs/results_240
+python plot_2411.py
+python plot_stations.py        # -> docs/results_240/figures
+```
+
 Interpreter: `C:\ProgramData\miniconda3\envs\meteva\python.exe` (Python 3.11).
 Shared settings: `config/config.2411.yaml`; local paths:
-`config/config.2411.local.yaml` (ignored by Git). Checklist:
-`docs/repro-2411_cn.md`.
+`config/config.2411.local.yaml` (ignored by Git). The initial cache build uses
+all available stations; training and verification require `paths.station_list`
+from the QC step. Checklist: `docs/repro-2411_cn.md`.
 
 ### Before running
 
@@ -140,6 +172,13 @@ Follow the general coding standards: English comments, output, and exception mes
 - All comments and docstrings are in English.
 - External data column names and chart labels may remain in Chinese.
 - Configuration paths are loaded from `config/` via `src.utils.load_config()`.
+- Data, caches, labels, predictions and saved arrays are float32 in every
+  script. The only exception is the LightGBM `Sequence` input, which the
+  library requires to be float64; it is converted at that interface only and
+  never persisted.
+- The 10-day product stores directions and speeds as float32.
+- `lead.mode` switches between the 24-slot main experiment and the 80-slot
+  3-240 h window; both modes share one code path.
 
 ---
 
@@ -159,6 +198,9 @@ Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/D
 - Load paths from `config/` instead of hardcoding them in scripts.
 - Run `py_compile` after modifying Python files.
 - Update `Modified` dates in file headers when editing files.
+- When editing a `.docx` with track changes, change text only and never split
+  or merge paragraphs, so that rejecting all revisions reproduces the original
+  paragraph structure and media byte for byte.
 
 ### Ask first
 - Delete or rename existing model output files.
@@ -183,12 +225,14 @@ Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/D
 | Code standards and demo formalization | Formalized torch demo models, applied coding standards across the project, and split oversized evaluation files | 2026-07-22 |
 | New raw observation preprocessing | Added `extract_obs.py` (per-station raw CSVs at `paths.sta_raw` → `ob{year}[_suffix].npy`, same layout as `convert_npy.py`; cleaning: direction 360→0, direction [0,360), speed [0,1000), else NaN; max-wind pair stays NaN; Inst_Max maps to gust pair). Added `sta_raw` path and `obs_suffix` constant to config (local Windows value: `dth`). Committed as `45efc52` and pushed to Gitee + GitHub | 2026-09-14 |
 | Documentation cleanup | Resolved leftover Git conflict markers in `AGENTS.md`, `README.md`, `README_cn.md`, synced the file structure/commands with the actual repository layout, and removed the VS Code webview startup-race trigger (`window.restoreWindows: none`) | 2026-09-17 |
+| 2411-station main experiment | Built 2233 station caches, retained 2187 QC stations, generated 30 six-fold prediction arrays, completed common-sample tables/figures and the revised paper | 2026-11-06 |
+| Extension and reproduction hardening | Fixed the LightGBM Sequence interface, fair scheme masks/aggregation, 10-day output/resume behavior, and the required QC reproduction step; synchronized project and paper documents | 2026-11-19 |
 
 ### In Progress
 
 | Task | Description | Notes |
 |------|-------------|-------|
-| New-station-set experiment | Repeat the full pipeline on a new, larger raw dataset (`D:\data\sta`, 2472 station CSVs, ~185M records) with a **brand-new station set** (not the original 97) | Blocked on user input: ① new station info CSV with `台站号,经度,纬度` (required by `extract_ec.py` interpolation), ② EC4AI raw data coverage for the new years, ③ exact year range. Planned changes once unblocked: make `extract_ec.py` year range configurable (currently hardcoded 2017-2023 at `extract_ec.py:89-90`); support the obs filename suffix in `lgb_uv.py` / `lgb_wind.py` / evaluation loaders (they read `ob{year}.npy` without suffix, e.g. `lgb_uv.py:353-354`); ensure NWP and obs npy station orders match (both ascending station ID) |
+| Full extension runs | Run the four-scheme benchmark and 10-day product when scheduled | Code and synthetic smoke checks pass; no full extension run has produced paper results |
 
 ### Todo
 
@@ -197,4 +241,4 @@ Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/D
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-09-17
+**Last Updated**: 2026-11-19

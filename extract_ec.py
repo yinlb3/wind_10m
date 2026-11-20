@@ -8,7 +8,7 @@ and output CSV format data.
 
 Founded in 2023-07-15
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import os

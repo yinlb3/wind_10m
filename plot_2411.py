@@ -8,8 +8,8 @@ matrix written by compute_mi_2411.py, and saves the figures to the result
 directory.
 
 Founded in 2026-10-29
-Modified in 2026-10-29
-@author: yinlb, deepseek-flash
+Modified in 2026-11-20
+@author: yinlb
 """
 
 import argparse
@@ -24,14 +24,17 @@ from scipy import stats
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
+from src import data_2411  # noqa: E402
+
 MODELS = ['ECMWF-IFS', 'PDFM', 'MLR', 'LightGBM-A', 'LightGBM-B']
 # Colours follow the paper; the LightGBM-B variant of this reproduction is
 # drawn in purple because the paper has no second LightGBM branch.
 COLORS = ['blue', 'green', 'yellow', 'red', 'purple']
 SECTORS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 SPEED_LABELS = [
-    '≥0.3m/s', '≥1.6m/s', '≥3.4m/s', '≥5.5m/s',
-    '≥8.0m/s', '≥10.8m/s', '≥13.9m/s', '≥17.2m/s',
+    '≥0.3 m·s$^{-1}$', '≥1.6 m·s$^{-1}$', '≥3.4 m·s$^{-1}$',
+    '≥5.5 m·s$^{-1}$', '≥8.0 m·s$^{-1}$', '≥10.8 m·s$^{-1}$',
+    '≥13.9 m·s$^{-1}$', '≥17.2 m·s$^{-1}$',
 ]
 GRADE_LABELS = [
     '1级', '2级', '3级', '4级', '5级', '6级', '7级', '8级及以上',
@@ -58,12 +61,58 @@ plt.rcParams['font.sans-serif'] = [
     'SimHei', 'Microsoft YaHei', 'DejaVu Sans'
 ]
 plt.rcParams['axes.unicode_minus'] = False
-DPI = 300
+_CFG = data_2411.load_config()
+FIG_DPI = int(_CFG['figure']['dpi'])
+FIG_FORMATS = [
+    str(item).lstrip('.').lower() for item in _CFG['figure']['formats']
+]
+if not FIG_FORMATS:
+    raise ValueError('figure.formats is empty in config/config.2411.yaml')
+# Figure widths follow the journal layout: single column 7.8 cm, double 15 cm.
+CM = 1.0 / 2.54
+W_SINGLE = 7.8 * CM
+W_DOUBLE = 15.0 * CM
+
 # Below this station count the station-wise distribution and the high speed
 # grades are not representative, so the figures are marked as provisional.
 MIN_STATIONS = 50
 # Below this sample count the kappa of one speed grade is too noisy to plot.
 MIN_GRADE_SAMPLES = 30
+
+
+def save_fig(
+    fig: plt.Figure,
+    fig_dir: pathlib.Path,
+    name: str,
+    **kwargs: typing.Any,
+) -> None:
+    """
+    Save one figure once per configured format.
+
+    Args:
+        fig: Figure to save.
+        fig_dir: Output directory of the figures.
+        name: File stem without the extension.
+        kwargs: Extra arguments passed to ``savefig``.
+    """
+    for ext in FIG_FORMATS:
+        path = fig_dir / '{0}.{1}'.format(name, ext)
+        fig.savefig(path, dpi=FIG_DPI, **kwargs)
+
+
+def label_panels(axes: np.ndarray, tags: str) -> None:
+    """
+    Add self-contained panel labels to a composite figure.
+
+    Args:
+        axes: Array of matplotlib axes.
+        tags: One letter per panel, in row-major order.
+    """
+    for axis, tag in zip(axes.flat, tags):
+        axis.text(
+            -0.06, 1.06, '({0})'.format(tag), transform=axis.transAxes,
+            ha='left', va='top', fontsize=9,
+        )
 
 
 def _read(path: pathlib.Path) -> typing.Optional[pd.DataFrame]:
@@ -104,7 +153,7 @@ def plot_mi(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     matrix = matrix[np.ix_(index, index)]
     labels = [FACTOR_LABELS[names[item]] for item in index]
 
-    fig, axis = plt.subplots(figsize=(11, 9))
+    fig, axis = plt.subplots(figsize=(W_DOUBLE, W_DOUBLE * 9.0 / 11.0))
     image = axis.imshow(matrix, cmap='Reds', vmin=0)
     ticks = np.arange(len(labels))
     axis.set_xticks(
@@ -118,7 +167,7 @@ def plot_mi(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     axis.tick_params(which='minor', length=0)
     fig.colorbar(image, ax=axis, shrink=0.75)
     fig.tight_layout()
-    fig.savefig(fig_dir / 'fig1_mi.jpg', dpi=DPI)
+    save_fig(fig, fig_dir, 'fig1_mi')
     plt.close(fig)
 
 
@@ -166,7 +215,7 @@ def _grouped_bars(
 
 def plot_ts(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     """
-    Draw the threat score of the speed grades (Figure 2a).
+    Draw cumulative threat scores at the wind-speed thresholds (Figure 2a).
 
     Args:
         result_dir: Directory holding table5_overall.csv.
@@ -195,13 +244,13 @@ def plot_ts(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
                 flush=True,
             )
 
-    fig, axis = plt.subplots(figsize=(9, 3.8))
+    fig, axis = plt.subplots(figsize=(W_SINGLE, W_SINGLE * 3.8 / 9.0))
     _grouped_bars(
-        axis, values, SPEED_LABELS, 'TS', '风速等级', ylim=1.0,
+        axis, values, SPEED_LABELS, 'TS', '风速阈值（m·s$^{-1}$）', ylim=1.0,
         legend='inside',
     )
     fig.tight_layout()
-    fig.savefig(fig_dir / 'fig2a_ts_grade.jpg', dpi=DPI)
+    save_fig(fig, fig_dir, 'fig2a_ts_grade')
     plt.close(fig)
 
 
@@ -233,13 +282,13 @@ def plot_kappa(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
                     flush=True,
                 )
     ticks = GRADE_LABELS[:table.shape[0]]
-    fig, axis = plt.subplots(figsize=(9, 3.8))
+    fig, axis = plt.subplots(figsize=(W_SINGLE, W_SINGLE * 3.8 / 9.0))
     _grouped_bars(
         axis, table, ticks, 'kappa', '风速等级', ylim=1.0, legend='inside',
     )
     axis.legend(fontsize=8, loc='upper left')
     fig.tight_layout()
-    fig.savefig(fig_dir / 'fig2b_kappa_grade.jpg', dpi=DPI)
+    save_fig(fig, fig_dir, 'fig2b_kappa_grade')
     plt.close(fig)
 
 
@@ -258,7 +307,9 @@ def _panel(
         ylabel: Y axis label.
         ylim: Upper limit of the y axis, auto when None.
     """
-    _grouped_bars(axis, table, ticks, ylabel, xlabel, ylim=ylim)
+    _grouped_bars(
+        axis, table, ticks, ylabel, xlabel, ylim=ylim, legend='inside'
+    )
 
 
 def plot_rmse_panels(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
@@ -272,8 +323,6 @@ def plot_rmse_panels(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     paths = (
         'table5_by_year.csv',
         'group_month_rmse.csv', 'group_month_dir_rmse.csv',
-        'group_lead_rmse.csv', 'group_lead_dir_rmse.csv',
-        'group_hour_rmse.csv', 'group_hour_dir_rmse.csv',
     )
     tables = [_read(result_dir / name) for name in paths]
     if any(item is None for item in tables):
@@ -281,37 +330,93 @@ def plot_rmse_panels(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     by_year = tables[0]
     month = tables[1].set_index('group')
     month_dir = tables[2].set_index('group')
-    lead = tables[3].set_index('group')
-    lead_dir = tables[4].set_index('group')
-    hour = tables[5].set_index('group')
-    hour_dir = tables[6].set_index('group')
 
     year_ws = by_year.pivot(index='year', columns='model', values='ws_rmse')
     year_wd = by_year.pivot(index='year', columns='model', values='wd_rmse')
     year_ticks = ['{0}年'.format(int(item)) for item in year_ws.index]
     month_ticks = ['{0}月'.format(i) for i in range(1, month.shape[0] + 1)]
-    lead_ticks = ['{0}'.format(i) for i in range(1, lead.shape[0] + 1)]
-    hour_ticks = ['{0}:00'.format(int(item)) for item in hour.index]
 
-    fig, axes = plt.subplots(4, 2, figsize=(20, 15))
-    fig.subplots_adjust(hspace=0.6, wspace=0.22)
-    _panel(axes[0, 0], year_ws, year_ticks, '年份', '风速RMSE（m/s）', 1.6)
-    _panel(axes[0, 1], year_wd, year_ticks, '年份', '风向RMSE（°）')
-    _panel(axes[1, 0], month, month_ticks, '月份', '风速RMSE（m/s）', 1.6)
-    _panel(axes[1, 1], month_dir, month_ticks, '月份', '风向RMSE（°）',
-           100.0)
-    _panel(axes[2, 0], lead, lead_ticks, '预报时效（h）', '风速RMSE（m/s）',
+    fig, axes = plt.subplots(2, 2, figsize=(W_DOUBLE, W_DOUBLE * 0.78))
+    fig.subplots_adjust(hspace=0.55, wspace=0.28)
+    _panel(axes[0, 0], year_ws, year_ticks, '年份', '风速 RMSE（m·s$^{-1}$）',
            1.6)
-    _panel(axes[2, 1], lead_dir, lead_ticks, '预报时效（h）', '风向RMSE（°）',
-           100.0)
-    _panel(axes[3, 0], hour, hour_ticks, '预报时间（UTC）', '风速RMSE（m/s）',
+    _panel(axes[0, 1], year_wd, year_ticks, '年份', '风向 RMSE（°）')
+    _panel(axes[1, 0], month, month_ticks, '月份', '风速 RMSE（m·s$^{-1}$）',
            1.6)
-    _panel(axes[3, 1], hour_dir, hour_ticks, '预报时间（UTC）', '风向RMSE（°）',
+    _panel(axes[1, 1], month_dir, month_ticks, '月份', '风向 RMSE（°）',
            100.0)
-    for axis in (axes[3, 0], axes[3, 1]):
-        axis.tick_params(axis='x', labelsize=6.5)
-    fig.savefig(fig_dir / 'fig3_rmse_panels.jpg', dpi=DPI, bbox_inches='tight')
+    label_panels(axes, 'abcd')
+    save_fig(fig, fig_dir, 'fig3_rmse_panels', bbox_inches='tight')
     plt.close(fig)
+
+
+def _line_panel(
+    axis: plt.Axes,
+    table: pd.DataFrame,
+    x_val: np.ndarray,
+    xlabel: str,
+    ylabel: str,
+) -> None:
+    """
+    Draw one RMSE panel as lines, one line per model.
+
+    Args:
+        axis: Target axis.
+        table: Table with one column per model, indexed by the group value.
+        x_val: X coordinates of the rows.
+        xlabel: X axis label.
+        ylabel: Y axis label.
+    """
+    for model in MODELS:
+        if model not in table.columns:
+            continue
+        axis.plot(
+            x_val, table[model].to_numpy(dtype=float),
+            color=COLORS[MODELS.index(model)], marker='o', markersize=1.8,
+            linewidth=0.9, label=model,
+        )
+    axis.set_xlabel(xlabel, fontsize=7)
+    axis.set_ylabel(ylabel, fontsize=7)
+    axis.tick_params(labelsize=6.5)
+    axis.grid(alpha=0.3, linewidth=0.5)
+    axis.legend(
+        fontsize=5.5, ncol=3, loc='upper center',
+        bbox_to_anchor=(0.5, 1.24), frameon=False,
+    )
+
+
+def plot_rmse_lines(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
+    """
+    Draw the lead-time and hour-of-day RMSE as separate line charts.
+
+    Args:
+        result_dir: Directory holding the group tables.
+        fig_dir: Output directory for figures.
+    """
+    paths = (
+        'group_lead_rmse.csv', 'group_lead_dir_rmse.csv',
+        'group_hour_rmse.csv', 'group_hour_dir_rmse.csv',
+    )
+    tables = [_read(result_dir / name) for name in paths]
+    if any(item is None for item in tables):
+        return
+    lead = tables[0].set_index('group')
+    lead_dir = tables[1].set_index('group')
+    hour = tables[2].set_index('group')
+    hour_dir = tables[3].set_index('group')
+    items = (
+        (lead, 'fig3e_lead_speed', '预报时效（h）', '风速 RMSE（m·s$^{-1}$）'),
+        (lead_dir, 'fig3f_lead_dir', '预报时效（h）', '风向 RMSE（°）'),
+        (hour, 'fig3g_hour_speed', '预报时间（UTC）', '风速 RMSE（m·s$^{-1}$）'),
+        (hour_dir, 'fig3h_hour_dir', '预报时间（UTC）', '风向 RMSE（°）'),
+    )
+    for table, name, xlabel, ylabel in items:
+        fig, axis = plt.subplots(figsize=(W_SINGLE, W_SINGLE * 0.78))
+        x_val = table.index.to_numpy(dtype=float)
+        _line_panel(axis, table, x_val, xlabel, ylabel)
+        fig.tight_layout()
+        save_fig(fig, fig_dir, name)
+        plt.close(fig)
 
 
 def _violin(
@@ -389,9 +494,10 @@ def plot_station(
         return
     n_station = ws.shape[0]
     if n_station < MIN_STATIONS and not allow_small:
-        stale = fig_dir / 'fig4_station_violin.jpg'
-        if stale.exists():
-            stale.unlink()
+        for ext in FIG_FORMATS:
+            stale = fig_dir / 'fig4_station_violin.{0}'.format(ext)
+            if stale.exists():
+                stale.unlink()
         print(
             '  skipped: only {0} stations, need >= {1} for a violin plot '
             '(stale figure removed; use --allow-small to force)'.format(
@@ -408,14 +514,14 @@ def plot_station(
         )
 
     names = [model for model in MODELS if model in ws.columns]
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 2, figsize=(W_DOUBLE, W_DOUBLE * 10.0 / 12.0))
     _violin(
         axes[0, 0], [ws[name].dropna().to_numpy() for name in names],
-        names, '风速RMSE（m/s）',
+        names, '风速 RMSE（m·s$^{-1}$）',
     )
     _violin(
         axes[0, 1], [wd[name].dropna().to_numpy() for name in names],
-        names, '风向RMSE（°）',
+        names, '风向 RMSE（°）',
     )
 
     base_ws = ws['ECMWF-IFS'].to_numpy(dtype=float)
@@ -434,10 +540,9 @@ def plot_station(
         data = [item[~np.isnan(item)] for item in data]
         _violin(axis, data, improved, label)
 
+    label_panels(axes, 'abcd')
     fig.tight_layout()
-    fig.savefig(
-        fig_dir / 'fig4_station_violin.jpg', dpi=DPI, bbox_inches='tight'
-    )
+    save_fig(fig, fig_dir, 'fig4_station_violin', bbox_inches='tight')
     plt.close(fig)
 
 
@@ -448,8 +553,8 @@ def _radar(
     """
     Draw one eight-sector radar panel.
 
-    Negative improvement rates cannot be drawn on a polar axis, so they are
-    clipped at zero, as in the paper's Figure 5.
+    Negative improvement rates are retained so that degraded sectors remain
+    visible rather than being clipped to zero.
 
     Args:
         axis: Target polar axis.
@@ -468,7 +573,7 @@ def _radar(
         values = table[model].to_numpy(dtype=float)
         if base is not None:
             values = (base - values) / base * 100.0
-        values = np.maximum(np.nan_to_num(values, nan=0.0), 0.0)
+        values = np.nan_to_num(values, nan=0.0)
         axis.plot(
             closed, np.append(values, values[0]),
             color=COLORS[MODELS.index(model)], label=model,
@@ -502,15 +607,16 @@ def plot_radar(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     base_dir = direction['ECMWF-IFS'].to_numpy(dtype=float)
 
     fig, axes = plt.subplots(
-        2, 2, figsize=(13, 12),
+        2, 2, figsize=(W_DOUBLE, W_DOUBLE * 12.0 / 13.0),
         subplot_kw={'projection': 'polar'},
     )
-    _radar(axes[0, 0], speed, '风速RMSE（m/s）')
-    _radar(axes[0, 1], direction, '风向RMSE（°）')
-    _radar(axes[1, 0], speed, '风速RMSE改善率（%）', base_speed)
-    _radar(axes[1, 1], direction, '风向RMSE改善率（%）', base_dir)
+    _radar(axes[0, 0], speed, '风速 RMSE（m·s$^{-1}$）')
+    _radar(axes[0, 1], direction, '风向 RMSE（°）')
+    _radar(axes[1, 0], speed, '风速 RMSE 改善率（%）', base_speed)
+    _radar(axes[1, 1], direction, '风向 RMSE 改善率（%）', base_dir)
+    label_panels(axes, 'abcd')
     fig.tight_layout()
-    fig.savefig(fig_dir / 'fig5_radar.jpg', dpi=DPI, bbox_inches='tight')
+    save_fig(fig, fig_dir, 'fig5_radar', bbox_inches='tight')
     plt.close(fig)
 
 
@@ -522,14 +628,13 @@ def main(allow_small: bool = False) -> None:
         allow_small: Draw the station violins even when fewer than
             MIN_STATIONS stations are available.
     """
-    from src import data_2411
-
-    cfg = data_2411.load_config()
-    result_dir = pathlib.Path(cfg['paths']['result_dir'])
+    cfg = _CFG
+    result_dir = data_2411.result_root(cfg)
+    table_dir = result_dir / 'tables'
     fig_dir = result_dir / 'figures'
     fig_dir.mkdir(parents=True, exist_ok=True)
 
-    station_table = _read(result_dir / 'group_station_ws_rmse.csv')
+    station_table = _read(table_dir / 'group_station_ws_rmse.csv')
     n_station = 0 if station_table is None else station_table.shape[0]
     if n_station < MIN_STATIONS:
         print(
@@ -540,12 +645,13 @@ def main(allow_small: bool = False) -> None:
         )
 
     for func in (
-        plot_mi, plot_ts, plot_kappa, plot_rmse_panels, plot_radar
+        plot_mi, plot_ts, plot_kappa, plot_rmse_panels, plot_rmse_lines,
+        plot_radar
     ):
         print('  drawing {0}'.format(func.__name__), flush=True)
-        func(result_dir, fig_dir)
+        func(table_dir, fig_dir)
     print('  drawing plot_station', flush=True)
-    plot_station(result_dir, fig_dir, allow_small)
+    plot_station(table_dir, fig_dir, allow_small)
     print('Figures: {0}'.format(fig_dir), flush=True)
 
 

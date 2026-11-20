@@ -9,7 +9,7 @@ scores, and draws comparison charts (bars, violin plots, radar plots).
 
 Founded in 2024-10-11
 Modified in 2026-09-18
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import os

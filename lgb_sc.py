@@ -3,7 +3,7 @@
 """
 Founded in 2023-09-15
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import os

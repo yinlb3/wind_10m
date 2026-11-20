@@ -8,7 +8,7 @@ used by CNN, DNN, and Transformer wind speed correction models.
 
 Founded in 2025-08-29
 Modified in 2026-09-18
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import copy

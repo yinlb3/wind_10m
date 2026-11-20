@@ -7,7 +7,7 @@ Common utility functions for configuration loading, time formatting, etc.
 
 Founded in 2026-04-03
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import os

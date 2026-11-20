@@ -9,6 +9,7 @@ scikit-learn==1.9.1
 matplotlib==3.11.2
 scipy==1.17.1
 joblib==1.6.0
+psutil==7.2.2
 
 # Verification package, installed in editable mode from the local checkout.
 meteva==1.9.6.1

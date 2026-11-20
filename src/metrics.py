@@ -9,7 +9,7 @@ helpers under evaluation/.
 
 Founded in 2026-09-18
 Modified in 2026-09-18
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import copy

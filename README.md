@@ -122,22 +122,26 @@ The 2411-station dataset is already stored as per-station numpy arrays, so the
 # 0. Environment: C:\ProgramData\miniconda3\envs\meteva\python.exe (Python 3.11)
 pip install -r requirements.txt
 
-# 1. Build per-station caches (~6 min, ~30 GB under D:\data\2411\cache)
+# 1. Build caches for all 2233 available stations (~6 min, ~30 GB)
 python build_cache_2411.py
 
-# 2. Train five models over six leave-one-year-out folds (~5 h)
+# 2. Quality control: keep 2187 stations and write paths.station_list
+python qc_stations_2411.py
+
+# 3. Train five models over six leave-one-year-out folds (~5 h)
 python train_2411.py
 
-# 3. Write the verification tables to docs/results
+# 4. Write the verification tables to docs/results/tables
 python verify_2411.py
 
-# 4. Mutual-information matrix and figures
+# 5. Mutual-information matrix and figures
 python compute_mi_2411.py
 python plot_2411.py
 ```
 
 Local paths live in `config/config.2411.local.yaml` (ignored by Git); the
-shared settings are in `config/config.2411.yaml`. Details and checklists:
+shared settings are in `config/config.2411.yaml`. Training and verification
+stop if the configured QC station list is missing. Details and checklists:
 `docs/repro-2411_cn.md`.
 
 ## License
@@ -155,12 +159,14 @@ This is an internal research project. No public license is provided.
 | Code standards and demo formalization | Formalized torch demo models and applied coding standards across the project | 2026-07-22 |
 | New raw observation preprocessing | Added `extract_obs.py` to convert per-station raw CSVs directly into `ob{year}.npy` arrays | 2026-09-14 |
 | Documentation cleanup | Resolved leftover Git conflict markers in `AGENTS.md`, `README.md`, `README_cn.md` and synced the file structure/commands with the actual repository layout | 2026-09-17 |
+| 2411-station main experiment | Completed 2187-station QC, six-fold predictions, common-sample tables/figures and the revised paper | 2026-11-06 |
+| Extension and reproduction hardening | Fixed extension masks/aggregation and output behavior, added the required QC step, and synchronized documentation | 2026-11-19 |
 
 ### In Progress
 
 | Task | Description |
 |------|-------------|
-| New-station-set experiment | Repeat the full pipeline on a new, larger raw dataset with a brand-new station set |
+| Full extension runs | Four-scheme benchmark and 10-day product; code and synthetic checks pass, full runs remain unscheduled |
 
 ### Todo
 
@@ -171,8 +177,8 @@ This is an internal research project. No public license is provided.
 
 ## Author
 
-- **Author**: yinlb<yinlb3@foxmail.com>, deepseek-flash
+- **Author**: yinlb<yinlb3@foxmail.com>
 
-**Last Updated**: 2026-09-17
+**Last Updated**: 2026-11-19
 
 **[中文版本](README_cn.md)**

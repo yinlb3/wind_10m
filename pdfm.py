@@ -3,7 +3,7 @@
 """
 Founded in 2024-08-18
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import copy

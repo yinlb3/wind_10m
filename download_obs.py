@@ -9,7 +9,7 @@ files consumed by extract_obs.py.
 
 Founded in 2026-07-29
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import os

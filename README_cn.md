@@ -121,22 +121,26 @@ wind_10m/
 # 0. 环境：C:\ProgramData\miniconda3\envs\meteva\python.exe（Python 3.11）
 pip install -r requirements.txt
 
-# 1. 建站点缓存（约 6 min，占 D:\data\2411\cache 约 30 GB）
+# 1. 为全部 2233 个可用站建缓存（约 6 min，约 30 GB）
 python build_cache_2411.py
 
-# 2. 训练 5 个模型，6 折留一年（约 5 h）
+# 2. 站点质控：保留 2187 站并生成 paths.station_list 清单
+python qc_stations_2411.py
+
+# 3. 训练 5 个模型，6 折留一年（约 5 h）
 python train_2411.py
 
-# 3. 输出检验表到 docs/results
+# 4. 输出检验表到 docs/results/tables
 python verify_2411.py
 
-# 4. 互信息矩阵与出图
+# 5. 互信息矩阵与出图
 python compute_mi_2411.py
 python plot_2411.py
 ```
 
 本机路径放 `config/config.2411.local.yaml`（Git 忽略），共享配置在
-`config/config.2411.yaml`。步骤清单与验收标准见 `docs/repro-2411_cn.md`。
+`config/config.2411.yaml`。训练和检验会在 QC 站点清单缺失时明确停止。
+步骤清单与验收标准见 `docs/repro-2411_cn.md`。
 
 ## 许可证
 
@@ -153,12 +157,14 @@ python plot_2411.py
 | 编码规范与演示模型正式化 | 正式化 torch 演示模型，全项目应用编码规范 | 2026-07-22 |
 | 新原始观测预处理 | 新增 `extract_obs.py`，将分站原始 CSV 直接转换为 `ob{year}.npy` 数组 | 2026-09-14 |
 | 文档清理 | 解决 `AGENTS.md`、`README.md`、`README_cn.md` 中残留的 Git 冲突标记，并使文件结构与命令与实际布局一致 | 2026-09-17 |
+| 2411 站主实验 | 完成 2187 站质控、六折预测、共同样本表图和论文修订 | 2026-11-06 |
+| 扩展与复现加固 | 修复扩展掩膜/汇总和产品输出，补齐 QC 步骤并同步文档 | 2026-11-19 |
 
 ### 进行中
 
 | 任务 | 描述 |
 |------|------|
-| 新站集实验 | 在更大规模的新原始数据集上重复完整流程，使用全新站集 |
+| 扩展全量运行 | 四方案对比和十天产品；代码与合成检查通过，全量运行尚未安排 |
 
 ### 待办
 
@@ -169,8 +175,8 @@ python plot_2411.py
 
 ## 作者
 
-- **作者**：yinlb<yinlb3@foxmail.com>, deepseek-flash
+- **作者**：yinlb<yinlb3@foxmail.com>
 
-**最后更新**：2026-09-17
+**最后更新**：2026-11-19
 
 **[English](README.md)**

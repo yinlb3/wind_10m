@@ -7,8 +7,8 @@ Samples a subset of stations and forecast cycles, flattens the factors and
 estimates the 26 x 26 mutual-information matrix with a 2-D histogram.
 
 Founded in 2026-10-29
-Modified in 2026-10-29
-@author: yinlb, deepseek-flash
+Modified in 2026-11-19
+@author: yinlb
 """
 
 import argparse
@@ -100,11 +100,12 @@ def main(n_station: int = 200, n_sample: int = 100) -> None:
             print('  {0}/{1}'.format(i + 1, n_factor), flush=True)
 
     result_dir = pathlib.Path(cfg['paths']['result_dir'])
-    result_dir.mkdir(parents=True, exist_ok=True)
-    np.save(result_dir / 'mi_2411.npy', matrix)
-    with open(result_dir / 'mi_2411_names.txt', 'w', encoding='utf-8') as fp:
+    table_dir = result_dir / 'tables'
+    table_dir.mkdir(parents=True, exist_ok=True)
+    np.save(table_dir / 'mi_2411.npy', matrix)
+    with open(table_dir / 'mi_2411_names.txt', 'w', encoding='utf-8') as fp:
         fp.write('\n'.join(names))
-    print('Saved {0}'.format(result_dir / 'mi_2411.npy'), flush=True)
+    print('Saved {0}'.format(table_dir / 'mi_2411.npy'), flush=True)
 
 
 if __name__ == '__main__':

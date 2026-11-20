@@ -8,8 +8,8 @@ array, clean and align the observations, and write one compressed npz file
 containing the interpolated factors and the encoded targets.
 
 Founded in 2026-10-29
-Modified in 2026-10-29
-@author: yinlb, deepseek-flash
+Modified in 2026-11-19
+@author: yinlb
 """
 
 import argparse
@@ -74,7 +74,7 @@ def _summarize(arrays: dict, cfg: dict) -> dict:
 
 def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
     """
-    Build caches for all selected stations.
+    Build caches for every station with both factors and observations.
 
     Args:
         limit: Number of stations to process (0 means all).
@@ -84,7 +84,7 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
         typing.List[dict]: Per-station quality report.
     """
     cfg = data_2411.load_config()
-    station_ids = data_2411.station_ids(cfg)
+    station_ids = data_2411.available_station_ids(cfg)
     if limit:
         station_ids = station_ids[:limit]
     total = len(station_ids)
@@ -126,7 +126,7 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
                 flush=True,
             )
 
-    result_dir = pathlib.Path(cfg['paths']['result_dir'])
+    result_dir = pathlib.Path(cfg['paths']['result_dir']) / 'qc'
     result_dir.mkdir(parents=True, exist_ok=True)
     report_path = result_dir / 'cache_report.json'
     with open(report_path, 'w', encoding='utf-8') as file_handle:

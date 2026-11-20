@@ -8,7 +8,7 @@ forecasts.
 
 Founded in 2025-09-09
 Modified in 2026-09-18
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import copy

@@ -5,9 +5,12 @@
 paths:
   data_dir: '<DATA_2411_DIR>'       # e.g. D:\data\2411  (data{sta}.npy)
   sta_dir: '<STA_2411_DIR>'         # e.g. D:\data\2411\sta  ({sta}.csv + 2024\{sta}.csv)
-  cache_dir: '<CACHE_2411_DIR>'     # e.g. D:\data\2411\cache
-  pred_dir: '<PRED_2411_DIR>'       # e.g. D:\Project\wind\pred2411
+  cache_dir: '<CACHE_2411_DIR>'     # e.g. artifacts\2411\cache
+  pred_dir: '<PRED_2411_DIR>'       # e.g. artifacts\2411\pred
   result_dir: '<RESULT_2411_DIR>'   # e.g. docs\results
+  # Written by qc_stations_2411.py; required by training and verification.
+  # Comment out this entry only for an intentional unfiltered experiment.
+  station_list: 'docs/results/qc/stations_ok.txt'
 
 constants:
   # Documented year range; the actual sample grid is derived from start_time
@@ -27,6 +30,13 @@ lead:
   seg_b_step: 6
   begin_hour: 12                    # evaluation window start (hour)
   end_hour: 36                      # evaluation window end (hour, inclusive)
+  # Target window used by training, verification and plotting.
+  # mode 24  : the main experiment, hours 13-36 at 1 h steps (24 slots)
+  # mode 240 : the full product window, hours 3-240 at 3 h steps (80 slots)
+  mode: 240
+  grid_start: 3
+  grid_end: 240
+  grid_step: 3
 
 # Factor layout of data{sta}.npy (31 columns)
 features:
@@ -45,6 +55,24 @@ obs:
 model:
   random_seed: 20230718
   lgb_n_jobs: -1
+  # auto  : stream when the free RAM is below the preload estimate
+  # true  : always stream through LightGBM Sequence
+  # false : always preload all training rows (needs about 60 GB unified)
+  stream: auto
+  # Rows sampled to build the bin boundaries. A small value keeps the
+  # streaming path fast when no hour-grid cache is available.
+  bin_sample_cnt: 5000
   # The remaining LightGBM parameters stay at library defaults, matching the
   # original experiments; they are recorded here for reproducibility.
   lgb_params: {}
+
+# Figure output settings used by plot_2411.py
+figure:
+  dpi: 800                       # output resolution of every figure
+  formats: [jpg]                 # one or more extensions, e.g. [jpg, png]
+
+# Thread budget of the scheme benchmark. Inner threads x outer workers is
+# kept close to n_total so the four schemes run on the same budget.
+parallel:
+  reserve: 0                     # threads left for the OS (0 for a full run)
+  n_total: 0                     # 0 = auto: (cpu_count - reserve) rounded to 4

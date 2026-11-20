@@ -4,7 +4,7 @@ Rename variables in Python source files using tokenize.
 
 Founded in 2026-07-22
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import pathlib

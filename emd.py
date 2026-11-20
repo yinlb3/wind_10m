@@ -7,7 +7,7 @@ Demonstrates Empirical Mode Decomposition on a sample time series.
 
 Founded in 2023-07
 Modified in 2026-09-17
-@author: yinlb, deepseek-flash
+@author: yinlb
 """
 
 import pathlib
