@@ -38,8 +38,13 @@ pip install torch
 # 1. 将 EC 预报数据提取到站点
 python extract_ec.py
 
-# 1a.（可选）从 CMADaaS 下载分站观测 CSV
-python download_obs.py
+# 1a.（可选）下载 paths.station_csv 中站点的观测数据
+# 日期格式为 YYYYMMDD，结束日期不包含在下载范围内
+python download_obs.py 20170101 20230101
+# 或使用 meteva 内置国家站列表
+python download_obs.py --national 20170101 20230101
+# 可选：均衡分批，每批最多 100 站（默认全站）
+python download_obs.py --national --batch-size 100 20170101 20230101
 
 # 1b.（仅用于新原始观测数据）将分站 CSV 转换为 ob{year}.npy
 python extract_obs.py
@@ -128,6 +133,7 @@ wind_10m/
 | 编码规范与演示模型正式化 | 正式化 torch 演示模型，全项目应用编码规范 | 2026-07-22 |
 | 新原始观测预处理 | 新增 `extract_obs.py`，将分站原始 CSV 直接转换为 `ob{year}.npy` 数组 | 2026-09-14 |
 | 文档清理 | 解决 `AGENTS.md`、`README.md`、`README_cn.md` 中残留的 Git 冲突标记，并使文件结构与命令与实际布局一致 | 2026-09-17 |
+| CMADaaS 下载器增强 | 新增可配置均衡分批、半年请求、60 要素下载和按站点原子写入 CSV | 2026-11-20 |
 
 ### 进行中
 
@@ -146,6 +152,6 @@ wind_10m/
 
 - **作者**：yinlb<yinlb3@foxmail.com>, deepseek-flash
 
-**最后更新**：2026-09-17
+**最后更新**：2026-11-20
 
 **[English](README.md)**

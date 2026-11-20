@@ -38,8 +38,13 @@ pip install torch
 # 1. Extract EC forecast data to stations
 python extract_ec.py
 
-# 1a. (Optional) Download per-station obs CSVs from CMADaaS
-python download_obs.py
+# 1a. (Optional) Download obs for stations in paths.station_csv
+# Dates use YYYYMMDD; the end date is exclusive
+python download_obs.py 20170101 20230101
+# Or use the meteva built-in national station list
+python download_obs.py --national 20170101 20230101
+# Optional: balanced batches of at most 100 stations (default: all)
+python download_obs.py --national --batch-size 100 20170101 20230101
 
 # 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
 python extract_obs.py
@@ -128,6 +133,7 @@ This is an internal research project. No public license is provided.
 | Code standards and demo formalization | Formalized torch demo models and applied coding standards across the project | 2026-07-22 |
 | New raw observation preprocessing | Added `extract_obs.py` to convert per-station raw CSVs directly into `ob{year}.npy` arrays | 2026-09-14 |
 | Documentation cleanup | Resolved leftover Git conflict markers in `AGENTS.md`, `README.md`, `README_cn.md` and synced the file structure/commands with the actual repository layout | 2026-09-17 |
+| CMADaaS downloader enhancement | Added configurable balanced station batches, half-year requests, 60-element downloads, and atomic per-station CSV output | 2026-11-20 |
 
 ### In Progress
 
@@ -146,6 +152,6 @@ This is an internal research project. No public license is provided.
 
 - **Author**: yinlb<yinlb3@foxmail.com>, deepseek-flash
 
-**Last Updated**: 2026-09-17
+**Last Updated**: 2026-11-20
 
 **[中文版本](README_cn.md)**

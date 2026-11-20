@@ -72,8 +72,13 @@ wind_10m/
 # 1. Extract EC data to stations
 python extract_ec.py
 
-# 1a. (Optional) Download per-station obs CSVs from CMADaaS
-python download_obs.py
+# 1a. (Optional) Download obs for stations in paths.station_csv
+# Dates use YYYYMMDD; the end date is exclusive
+python download_obs.py 20170101 20230101
+# Or use the meteva built-in national station list
+python download_obs.py --national 20170101 20230101
+# Optional: balanced batches of at most 100 stations (default: all)
+python download_obs.py --national --batch-size 100 20170101 20230101
 
 # 1b. (Only for new raw obs data) Convert per-station CSVs to ob{year}.npy
 python extract_obs.py
@@ -165,6 +170,7 @@ Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/D
 | Code standards and demo formalization | Formalized torch demo models, applied coding standards across the project, and split oversized evaluation files | 2026-07-22 |
 | New raw observation preprocessing | Added `extract_obs.py` (per-station raw CSVs at `paths.sta_raw` → `ob{year}[_suffix].npy`, same layout as `convert_npy.py`; cleaning: direction 360→0, direction [0,360), speed [0,1000), else NaN; max-wind pair stays NaN; Inst_Max maps to gust pair). Added `sta_raw` path and `obs_suffix` constant to config (local Windows value: `dth`). Committed as `45efc52` and pushed to Gitee + GitHub | 2026-09-14 |
 | Documentation cleanup | Resolved leftover Git conflict markers in `AGENTS.md`, `README.md`, `README_cn.md`, synced the file structure/commands with the actual repository layout, and removed the VS Code webview startup-race trigger (`window.restoreWindows: none`) | 2026-09-17 |
+| CMADaaS downloader enhancement | Added configurable balanced station batches, half-year requests, 60-element downloads, and atomic per-station CSV output | 2026-11-20 |
 
 ### In Progress
 
@@ -179,4 +185,4 @@ Use English commit messages with a verb prefix (Add/Fix/Update/Remove/Refactor/D
 | Add unit tests | Add test cases for core functions | P3 |
 | Demo model scheme integration | Refactor demo models to support unified/per-lead-time/per-station schemes | P2 |
 
-**Last Updated**: 2026-09-17
+**Last Updated**: 2026-11-20
