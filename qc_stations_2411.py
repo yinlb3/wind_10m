@@ -3,13 +3,12 @@
 """
 Station quality control for the 2411-station experiment.
 
-Reads the observation coverage of every cached station, writes a per-station
-quality table, and keeps only the stations whose observation missing
-fraction is at or below the configured threshold. The kept list is written
-to ``paths.station_list`` so that every later step uses the same stations.
+Read aligned observations from an existing cache when available, otherwise
+read and clean the raw observation CSV directly. Write a per-station quality
+table and keep stations whose missing fraction is within the threshold.
 
 Founded in 2026-11-04
-Modified in 2026-11-04
+Modified in 2026-11-23
 @author: yinlb
 """
 
@@ -29,23 +28,29 @@ PROGRESS_EVERY = 200
 
 def station_stats(sta: str, cfg: dict) -> typing.Optional[dict]:
     """
-    Compute the quality statistics of one cached station.
+    Compute the observation quality statistics of one station.
 
     Args:
         sta: Station ID.
         cfg: Configuration dictionary.
 
     Returns:
-        typing.Optional[dict]: Statistics, or None when the cache is missing.
+        typing.Optional[dict]: Statistics, or None when observations are
+        unavailable.
     """
     path = data_2411.cache_path(sta, cfg)
-    if not path.exists():
-        return None
-    with np.load(path) as data:
-        speed = data['spd']
-        marker_slot = data['y'][..., 0]
+    if path.exists():
+        with np.load(path) as data:
+            direction = data['dir']
+            speed = data['spd']
+    else:
+        direction, speed, _ = data_2411.load_obs(sta, cfg)
+        if direction is None:
+            return None
     nan_frac = float(np.isnan(speed).mean())
-    calm_frac = float((marker_slot == cfg['obs']['calm_marker']).mean())
+    calm_frac = float(
+        (direction == cfg['obs']['calm_marker']).mean()
+    )
     return {
         'station': sta,
         'n_sample': int(speed.shape[0]),
@@ -99,15 +104,15 @@ def main(max_missing: float = 0.30) -> None:
 
     counts, _ = np.histogram(table['obs_nan_frac'].values, bins=BINS)
     print('Missing-fraction histogram:', flush=True)
-    for index, count in enumerate(counts):
+    for index, count in enumerate(counts, 1):
         print(
             '  [{0:.2f}, {1:.2f}): {2}'.format(
-                BINS[index], BINS[index + 1], int(count)
+                BINS[index - 1], BINS[index], int(count)
             ),
             flush=True,
         )
     print(
-        'Kept {0}  dropped {1} (>{2:.0%})  cache missing {3}'.format(
+        'Kept {0}  dropped {1} (>{2:.0%})  obs unavailable {3}'.format(
             keep.shape[0], drop.shape[0], max_missing, len(absent)
         ),
         flush=True,
@@ -126,7 +131,7 @@ def main(max_missing: float = 0.30) -> None:
 if __name__ == '__main__':
     print('Program qc_stations_2411.py started', flush=True)
     parser = argparse.ArgumentParser(
-        description='Station quality control for the 2411 experiment'
+        description='Run station quality control for the 2411 experiment'
     )
     parser.add_argument('--max-missing', type=float, default=0.30)
     args = parser.parse_args()

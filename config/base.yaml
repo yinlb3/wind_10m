@@ -1,0 +1,24 @@
+# Generic workflow defaults. Dataset files override these values.
+
+dataset:
+  type: npy_csv
+
+# Persistent-cache construction. Existing caches are reused in every mode.
+cache:
+  mode: none
+
+model:
+  random_seed: 20230718
+  lgb_n_jobs: -1
+  # auto: preload when memory allows, otherwise stream through Sequence.
+  stream: auto
+  bin_sample_cnt: 5000
+  lgb_params: {}
+
+figure:
+  dpi: 800
+  formats: [jpg]
+
+parallel:
+  reserve: 0
+  n_total: 0

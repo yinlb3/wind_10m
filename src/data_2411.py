@@ -9,7 +9,7 @@ observations, interpolates the 3-hourly factors to hourly values inside the
 evaluation window and encodes wind direction as (speed, sin, cos).
 
 Founded in 2026-10-29
-Modified in 2026-11-19
+Modified in 2026-11-23
 @author: yinlb
 """
 
@@ -18,9 +18,12 @@ import typing
 
 import numpy as np
 import pandas as pd
-import yaml
 
-CONFIG_NAME = 'config.2411.yaml'
+from wind10m.cache import CACHE_FULL_KEYS, CACHE_MODES, CACHE_OBS_KEYS
+from wind10m.config import deep_merge
+from wind10m.config import load_config as load_workflow_config
+
+CONFIG_NAME = 'datasets/2411.yaml'
 LOCAL_NAME = 'config.2411.local.yaml'
 
 # Column layout of data{sta}.npy (31 columns).
@@ -44,50 +47,26 @@ STA_COLS = [
 
 def load_config() -> dict:
     """
-    Load the 2411 experiment configuration and merge local paths.
+    Load generic defaults, the selected dataset, and local overrides.
 
     Returns:
         dict: Merged configuration dictionary.
-
-    Raises:
-        FileNotFoundError: If the base configuration file is missing.
     """
-    config_dir = pathlib.Path(__file__).parent.parent / 'config'
-    base_path = config_dir / CONFIG_NAME
-    if not base_path.exists():
-        raise FileNotFoundError(f'Missing configuration: {base_path}')
-    with open(base_path, 'r', encoding='utf-8') as file_handle:
-        cfg = yaml.safe_load(file_handle)
-
-    local_path = config_dir / LOCAL_NAME
-    if local_path.exists():
-        with open(local_path, 'r', encoding='utf-8') as file_handle:
-            local = yaml.safe_load(file_handle)
-        _deep_merge(base=cfg, override=local)
-    return cfg
+    return load_workflow_config()
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """
-    Recursively merge two dictionaries; override wins.
+    Merge configuration dictionaries through the generic implementation.
 
     Args:
         base: Base dictionary, modified in place.
         override: Dictionary whose values take precedence.
 
     Returns:
-        The merged dictionary.
+        dict: The merged dictionary.
     """
-    for key, value in override.items():
-        if (
-            key in base
-            and isinstance(base[key], dict)
-            and isinstance(value, dict)
-        ):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = value
-    return base
+    return deep_merge(base, override)
 
 
 def lead_hours(cfg: dict) -> np.ndarray:
@@ -528,9 +507,53 @@ def encode_uv(
     return np.stack([u_val, v_val], axis=-1).astype(np.float32)
 
 
+def cache_mode(cfg: dict) -> str:
+    """
+    Return the validated persistent-cache mode.
+
+    Args:
+        cfg: Configuration dictionary.
+
+    Returns:
+        str: 'none', 'obs', or 'full'.
+
+    Raises:
+        ValueError: If cache.mode is not a supported value.
+    """
+    mode = str(cfg.get('cache', {}).get('mode', 'none')).lower()
+    if mode not in CACHE_MODES:
+        raise ValueError(
+            "cache.mode must be one of 'none', 'obs', or 'full'; "
+            'got {0!r}'.format(mode)
+        )
+    return mode
+
+
+def build_observations(sta: str, cfg: dict) -> typing.Optional[dict]:
+    """
+    Build the aligned observation arrays of one station.
+
+    Args:
+        sta: Station ID.
+        cfg: Configuration dictionary.
+
+    Returns:
+        typing.Optional[dict]: Float32 direction, speed, and precipitation
+        arrays, or None when observations are unavailable.
+    """
+    direction, speed, precip = load_obs(sta, cfg)
+    if direction is None:
+        return None
+    return {
+        'dir': direction.astype(np.float32, copy=False),
+        'spd': speed.astype(np.float32, copy=False),
+        'pre': precip.astype(np.float32, copy=False),
+    }
+
+
 def build_station(sta: str, cfg: dict) -> typing.Optional[dict]:
     """
-    Build the cached arrays of one station.
+    Build all in-memory arrays of one station.
 
     Args:
         sta: Station ID.
@@ -540,17 +563,13 @@ def build_station(sta: str, cfg: dict) -> typing.Optional[dict]:
         typing.Optional[dict]: Dictionary with keys 'x', 'y', 'uv', 'dir',
         'spd' and 'pre', or None when observations are unavailable.
     """
-    direction, speed, precip = load_obs(sta, cfg)
-    if direction is None:
+    arrays = build_observations(sta, cfg)
+    if arrays is None:
         return None
-    return {
-        'x': load_factors(sta, cfg),
-        'y': encode_sc(direction, speed, cfg),
-        'uv': encode_uv(direction, speed, cfg),
-        'dir': direction.astype(np.float32),
-        'spd': speed.astype(np.float32),
-        'pre': precip.astype(np.float32),
-    }
+    arrays['x'] = load_factors(sta, cfg)
+    arrays['y'] = encode_sc(arrays['dir'], arrays['spd'], cfg)
+    arrays['uv'] = encode_uv(arrays['dir'], arrays['spd'], cfg)
+    return arrays
 
 
 def cache_path(sta: str, cfg: dict) -> pathlib.Path:
@@ -613,13 +632,43 @@ def result_root(cfg: dict) -> pathlib.Path:
     return base if not suffix else base.parent / (base.name + suffix)
 
 
+def _restore_arrays(
+    sta: str, stored: dict, cfg: dict
+) -> typing.Optional[dict]:
+    """Restore a complete station dictionary from any cache format."""
+    if 'dir' not in stored or 'spd' not in stored:
+        return None
+    n_hour = int(target_hours(cfg).size)
+    if stored['dir'].shape[1] != n_hour:
+        return None
+
+    arrays = {
+        key: stored[key] for key in CACHE_OBS_KEYS if key in stored
+    }
+    if 'x' in stored:
+        if stored['x'].shape[1] != n_hour:
+            return None
+        arrays['x'] = stored['x']
+    else:
+        arrays['x'] = load_factors(sta, cfg)
+    if 'y' in stored:
+        arrays['y'] = stored['y']
+    else:
+        arrays['y'] = encode_sc(arrays['dir'], arrays['spd'], cfg)
+    if 'uv' in stored:
+        arrays['uv'] = stored['uv']
+    else:
+        arrays['uv'] = encode_uv(arrays['dir'], arrays['spd'], cfg)
+    return arrays
+
+
 def load_arrays(sta: str, cfg: dict) -> typing.Optional[dict]:
     """
-    Return the station arrays for the active target grid.
+    Return complete station arrays for the active target grid.
 
-    The cached npz is reused only when its hour axis matches the active mode;
-    otherwise the arrays are rebuilt from the raw factor file and the
-    observation CSV, so one cache directory can serve both modes.
+    Reuse a compatible full, observation-only, or legacy cache. Missing
+    factors and encoded targets are rebuilt in memory. If no compatible cache
+    exists, build all arrays from the raw inputs without writing a cache.
 
     Args:
         sta: Station ID.
@@ -630,31 +679,48 @@ def load_arrays(sta: str, cfg: dict) -> typing.Optional[dict]:
         and 'pre', or None when observations are unavailable.
     """
     path = cache_path(sta, cfg)
-    n_hour = int(target_hours(cfg).size)
     if path.exists():
         with np.load(path) as data:
-            if data['x'].shape[1] == n_hour:
-                return {key: data[key] for key in data.files}
+            stored = {key: data[key] for key in data.files}
+        arrays = _restore_arrays(sta, stored, cfg)
+        if arrays is not None:
+            return arrays
     return build_station(sta, cfg)
 
 
 def save_cache(sta: str, cfg: dict, arrays: dict) -> pathlib.Path:
     """
-    Save the cached arrays of one station.
+    Save station arrays according to cache.mode.
+
+    Full mode stores x/dir/spd/pre, while observation mode stores only
+    dir/spd/pre. Encoded y/uv targets are derived from dir/spd on loading.
+    Legacy caches containing all arrays remain readable.
 
     Args:
         sta: Station ID.
         cfg: Configuration dictionary.
-        arrays: Arrays returned by build_station.
+        arrays: Arrays returned by build_station or build_observations.
 
     Returns:
         pathlib.Path: Written cache file path.
+
+    Raises:
+        ValueError: If caching is disabled or a required array is missing.
     """
+    mode = cache_mode(cfg)
+    if mode == 'none':
+        raise ValueError(
+            "Cache building is disabled; set cache.mode to 'obs' or 'full'"
+        )
+    keys = CACHE_FULL_KEYS if mode == 'full' else CACHE_OBS_KEYS
+    missing = [key for key in keys if key not in arrays]
+    if missing:
+        raise ValueError('Missing cache arrays: {0}'.format(missing))
     path = cache_path(sta, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Uncompressed npz: float32 factors compress poorly, and decompression
-    # dominates training I/O when 2233 files are read six times.
-    np.savez(path, **arrays)
+    # dominates training I/O when station files are read repeatedly.
+    np.savez(path, **{key: arrays[key] for key in keys})
     return path
 
 

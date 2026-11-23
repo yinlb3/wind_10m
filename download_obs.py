@@ -1,51 +1,47 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-CMADaaS station observation download module
+Download CMADaaS observations with resumable per-station CSV output.
 
-Download hourly surface observations for national surface stations from
-CMADaaS and write one CSV per station, producing the raw per-station CSV
-files consumed by extract_obs.py.
-
-Each request covers a configurable station batch for one half-year, with
-all stations in one batch by default. Responses are split by station and
-appended to per-station temporary CSV files. After every request and write
-succeeds, the temporary files atomically replace the final CSV files.
-Temporary files are removed at startup and on exit. Keyboard interruptions
-keep them for inspection.
+Requests remain serial and use configurable station batches for clipped
+half-year slices. Completed station slices are checkpointed atomically. Empty
+or failed requests stay unresolved, temporary CSVs are preserved, and other
+batches continue. Stations are finalized independently after all their slices
+complete; stations without any observations receive a header-only CSV.
 
 Founded in 2026-07-29
-Modified in 2026-11-20
+Modified in 2026-11-23
 @author: yinlb
 """
 
 import argparse
+import contextlib
+import hashlib
+import io
+import json
+import logging
 import os
 import pathlib
-import sys
+import time
 import typing
+from logging.handlers import RotatingFileHandler
 
 import arrow
 import pandas as pd
 from meteva import base as meb
 from nmc_met_io import retrieve_cmadaas as rc
 
-from src import utils
-
 try:
     from tqdm import tqdm
 except ImportError:
-    # Fallback to a silent iterator when tqdm is unavailable.
     tqdm = None
 
-# Number of failed station IDs printed at the end of a run; the full list is
-# usually too long to be readable in a terminal.
 FAILED_PREVIEW = 10
+STATE_NAME = '.download_state.json'
+LOG_NAME = 'download.log'
+STATE_VERSION = 1
+LOG_MAX_BYTES = 5 * 1024 * 1024
 
-# CMADaaS elements and their quality-control columns. Each element is
-# immediately followed by its quality-control column. extract_obs.py reads
-# only the wind columns listed in RAW_COLUMNS/COLUMN_MAP; the additional
-# columns are retained in the raw CSV files.
 ELEMENTS = (
     'Station_Id_C,Datetime,'
     'PRS,Q_PRS,'
@@ -78,32 +74,22 @@ ELEMENTS = (
     'Snow_Depth,Q_Snow_Depth,'
     'Snow_PRS,Q_Snow_PRS'
 )
-
-# CMADaaS data code for hourly surface observations.
 DATA_CODE = 'SURF_CHN_MUL_HOR'
+CSV_COLUMNS = tuple(ELEMENTS.split(','))
+
+
+class FetchResult(typing.NamedTuple):
+    """Result of one serial CMADaaS request."""
+
+    status: str
+    data: typing.Optional[pd.DataFrame]
+    message: str
 
 
 def _progress(total: int, description: str):
-    """
-    Create a progress bar driven by manual updates.
-
-    The bar counts theoretical hourly records for station batches written
-    to temporary CSVs. Its total is the number of hours in the time range
-    times the number of selected stations, so missing or duplicate returned
-    rows do not affect the percentage.
-
-    Args:
-        total: Theoretical number of records in the requested time range.
-        description: Label printed at the left of the progress bar.
-
-    Returns:
-        A tqdm progress bar, or None when tqdm is unavailable.
-    """
+    """Create a progress bar based on completed theoretical station hours."""
     if tqdm is None:
         return None
-    # miniters=1 keeps every update counted instead of letting tqdm derive
-    # a coarser refresh stride from mininterval. unit_scale renders large
-    # record counts with a k/M suffix.
     return tqdm(
         total=total,
         desc=description,
@@ -120,14 +106,7 @@ def _progress(total: int, description: str):
 
 
 def _progress_write(message: str) -> None:
-    """
-    Print a message without breaking an active tqdm progress bar.
-
-    Args:
-        message: The message to print.
-    """
-    # print() and tqdm share one output line; writing through the bar keeps
-    # the bar intact and pushes the message above it.
+    """Print one message without breaking the active progress bar."""
     if tqdm is not None:
         tqdm.write(message)
     else:
@@ -138,19 +117,7 @@ def _station_batches(
     station_ids: typing.List[str],
     batch_size: typing.Optional[int] = None,
 ) -> typing.List[typing.List[str]]:
-    """
-    Split station IDs into balanced batches, defaulting to one full batch.
-
-    Args:
-        station_ids: Station identifiers to split.
-        batch_size: Maximum stations per request. None requests all stations.
-
-    Returns:
-        Station batches whose sizes differ by at most one.
-
-    Raises:
-        ValueError: If batch_size is not a positive integer.
-    """
+    """Split station IDs into balanced batches."""
     if batch_size is not None and batch_size < 1:
         raise ValueError('The station batch size must be positive.')
     if not station_ids:
@@ -173,19 +140,8 @@ def _station_batches(
 def _half_year_slices(
     time_start: arrow.Arrow,
     time_end: arrow.Arrow,
-) -> typing.Iterator[
-    typing.Tuple[int, arrow.Arrow, arrow.Arrow]
-]:
-    """
-    Yield clipped half-year bounds for the requested time range.
-
-    Args:
-        time_start: Start of the download time range, inclusive.
-        time_end: End of the download time range, exclusive.
-
-    Yields:
-        Tuples of the year, slice start, and slice stop.
-    """
+) -> typing.Iterator[typing.Tuple[int, arrow.Arrow, arrow.Arrow]]:
+    """Yield clipped half-year bounds for the requested time range."""
     for year in range(time_start.year, time_end.year + 1):
         year_start = arrow.get(f'{year}0101', 'YYYYMMDD')
         year_stop = arrow.get(f'{year + 1}0101', 'YYYYMMDD')
@@ -203,67 +159,52 @@ def _half_year_slices(
                 yield year, slice_start, slice_stop
 
 
+def _slice_key(slice_start: arrow.Arrow, slice_stop: arrow.Arrow) -> str:
+    """Return the stable key of one clipped time slice."""
+    return '{0}-{1}'.format(
+        slice_start.format('YYYYMMDDHHmmss'),
+        slice_stop.format('YYYYMMDDHHmmss'),
+    )
+
+
 def _fetch_half_year(
     station_ids: typing.List[str],
     data_code: str,
     elements: str,
     slice_start: arrow.Arrow,
     slice_stop: arrow.Arrow,
-) -> typing.Optional[pd.DataFrame]:
-    """
-    Download one station batch for one clipped half-year slice.
-
-    Args:
-        station_ids: Station identifiers included in the request.
-        data_code: CMADaaS dataset code.
-        elements: Comma-separated element list.
-        slice_start: Start of this request, inclusive.
-        slice_stop: End of this request, exclusive.
-
-    Returns:
-        The observation DataFrame, or None when the request failed.
-    """
+) -> FetchResult:
+    """Fetch one request and retain the raw text emitted by the client."""
     time_range = (
         f'[{slice_start.format("YYYYMMDDHHmmss")},'
         f'{slice_stop.format("YYYYMMDDHHmmss")})'
     )
-
+    raw_output = io.StringIO()
     try:
-        sta = rc.cmadaas_obs_by_time_range_and_id(
-            time_range=time_range,
-            data_code=data_code,
-            trans_type=False,
-            elements=elements,
-            sta_ids=','.join(station_ids),
-        )
+        with contextlib.redirect_stdout(raw_output):
+            sta = rc.cmadaas_obs_by_time_range_and_id(
+                time_range=time_range,
+                data_code=data_code,
+                trans_type=False,
+                elements=elements,
+                sta_ids=','.join(station_ids),
+            )
     except Exception as error:
-        _progress_write(f'Request {time_range} failed: {error}')
-        return None
+        return FetchResult('error', None, str(error))
+    details = raw_output.getvalue().strip()
     if sta is None or len(sta) == 0:
-        _progress_write(f'No data returned for {time_range}')
-        return None
-    return sta
+        message = details or 'CMADaaS returned no records'
+        return FetchResult('empty', None, message)
+    return FetchResult('ok', sta, details)
 
 
 def _append_station_csvs(
     data: pd.DataFrame,
     output_dir: pathlib.Path,
     selected_ids: typing.Set[str],
-    written_ids: typing.Set[str],
-) -> None:
-    """
-    Split one response and append it to per-station temporary CSV files.
-
-    The first write for a station in each run creates a temporary file and
-    includes the header. Later responses append without a header.
-
-    Args:
-        data: Station-batch observation DataFrame from one response.
-        output_dir: Directory containing per-station CSV files.
-        selected_ids: Station identifiers requested in this run.
-        written_ids: Identifiers already written in this run, updated in
-            place after each successful station write.
-    """
+) -> typing.Dict[str, int]:
+    """Append one response and return updated temporary file sizes."""
+    sizes = {}
     for station_id, group in data.groupby('Station_Id_C', sort=True):
         sid = str(station_id).strip()
         if sid not in selected_ids:
@@ -273,51 +214,221 @@ def _append_station_csvs(
             subset=['Datetime'], keep='first'
         ).sort_values(by=['Datetime'])
         temp_path = output_dir / f'{sid}.csv.tmp'
-        is_new = sid not in written_ids
+        is_new = not temp_path.exists() or temp_path.stat().st_size == 0
         station_data.to_csv(
             path_or_buf=temp_path,
             index=False,
             mode='w' if is_new else 'a',
             header=is_new,
         )
-        written_ids.add(sid)
+        sizes[sid] = temp_path.stat().st_size
+    return sizes
 
 
-def _cleanup_temp_csvs(output_dir: pathlib.Path) -> None:
-    """
-    Remove per-station temporary CSV files from the output directory.
+def _job_signature(
+    station_ids: typing.List[str],
+    time_start: arrow.Arrow,
+    time_end: arrow.Arrow,
+) -> str:
+    """Hash all job settings that must match before a state is reused."""
+    content = {
+        'station_ids': station_ids,
+        'time_start': time_start.format('YYYYMMDDHHmmss'),
+        'time_end': time_end.format('YYYYMMDDHHmmss'),
+        'data_code': DATA_CODE,
+        'elements': ELEMENTS,
+        'version': STATE_VERSION,
+    }
+    raw = json.dumps(
+        content, ensure_ascii=False, sort_keys=True
+    ).encode('utf-8')
+    return hashlib.sha256(raw).hexdigest()
 
-    Args:
-        output_dir: Directory containing per-station CSV files.
-    """
-    for temp_path in output_dir.glob('*.csv.tmp'):
-        temp_path.unlink()
+
+def _new_state(signature: str) -> dict:
+    """Create an empty resumable job state."""
+    return {
+        'version': STATE_VERSION,
+        'signature': signature,
+        'stations': {},
+        'failures': {},
+    }
 
 
-def _finalize_station_csvs(
+def _load_state(
+    output_dir: pathlib.Path, signature: str, restart: bool
+) -> dict:
+    """Load a matching state or explicitly reset incomplete output."""
+    state_path = output_dir / STATE_NAME
+    if restart:
+        for temp_path in output_dir.glob('*.csv.tmp'):
+            temp_path.unlink()
+        if state_path.exists():
+            state_path.unlink()
+        return _new_state(signature)
+    if not state_path.exists():
+        leftovers = list(output_dir.glob('*.csv.tmp'))
+        if leftovers:
+            raise RuntimeError(
+                'Untracked temporary CSVs exist without a state file; '
+                'inspect them or run with --restart.'
+            )
+        return _new_state(signature)
+    with open(state_path, 'r', encoding='utf-8') as file_handle:
+        state = json.load(file_handle)
+    if state.get('signature') != signature:
+        raise ValueError(
+            'The existing download state belongs to another job; '
+            'use --restart or another output directory.'
+        )
+    return state
+
+
+def _station_state(state: dict, station_id: str) -> dict:
+    """Return the mutable checkpoint of one station."""
+    return state['stations'].setdefault(
+        station_id,
+        {'done_slices': [], 'temp_bytes': 0, 'status': 'pending'},
+    )
+
+
+def _repair_temp_csvs(output_dir: pathlib.Path, state: dict) -> None:
+    """Roll back writes that occurred after the last atomic checkpoint."""
+    for sid, station in state['stations'].items():
+        if station.get('status') in ('complete', 'no_data'):
+            continue
+        expected = int(station.get('temp_bytes', 0))
+        temp_path = output_dir / f'{sid}.csv.tmp'
+        if not temp_path.exists():
+            if expected:
+                raise RuntimeError(
+                    f'Temporary CSV is missing for station {sid}; '
+                    'restore it or run with --restart.'
+                )
+            continue
+        actual = temp_path.stat().st_size
+        if actual > expected:
+            with open(temp_path, 'r+b') as file_handle:
+                file_handle.truncate(expected)
+        elif actual < expected:
+            raise RuntimeError(
+                f'Temporary CSV is shorter than its checkpoint for {sid}; '
+                'restore it or run with --restart.'
+            )
+
+
+def _save_state(output_dir: pathlib.Path, state: dict) -> None:
+    """Atomically replace the current state without event-history growth."""
+    state['updated_at'] = arrow.now().isoformat()
+    path = output_dir / STATE_NAME
+    temp_path = output_dir / (STATE_NAME + '.tmp')
+    with open(temp_path, 'w', encoding='utf-8') as file_handle:
+        json.dump(state, file_handle, ensure_ascii=False, indent=1)
+    os.replace(temp_path, path)
+
+
+def _request_key(slice_key: str, station_ids: typing.List[str]) -> str:
+    """Identify one exact request for failure reporting."""
+    raw = slice_key + ':' + ','.join(station_ids)
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
+def _prune_failures(state: dict) -> None:
+    """Drop failure records whose station slices have since completed."""
+    for key, failure in list(state['failures'].items()):
+        slice_key = failure['slice_key']
+        resolved = True
+        for sid in failure['station_ids']:
+            station = _station_state(state, sid)
+            if slice_key == 'finalize':
+                resolved = station.get('status') in ('complete', 'no_data')
+            else:
+                resolved = slice_key in station['done_slices']
+            if not resolved:
+                break
+        if resolved:
+            state['failures'].pop(key, None)
+
+
+def _record_failure(
+    state: dict,
+    slice_key: str,
+    station_ids: typing.List[str],
+    message: str,
+    attempts: int,
+) -> None:
+    """Store the latest unresolved failure once."""
+    key = _request_key(slice_key, station_ids)
+    state['failures'][key] = {
+        'slice_key': slice_key,
+        'station_ids': station_ids,
+        'message': message,
+        'attempts': attempts,
+        'updated_at': arrow.now().isoformat(),
+    }
+
+
+def _finalize_ready_stations(
     output_dir: pathlib.Path,
-    station_ids: typing.Iterable[str],
-) -> typing.List[str]:
-    """
-    Replace final station CSVs with their completed temporary files.
-
-    Args:
-        output_dir: Directory containing per-station CSV files.
-        station_ids: Station identifiers with completed temporary files.
-
-    Returns:
-        Station identifiers whose temporary files could not be renamed.
-    """
-    failed_ids = list()
-    for sid in sorted(station_ids):
+    state: dict,
+    station_ids: typing.List[str],
+    slice_keys: typing.Set[str],
+) -> None:
+    """Publish each station as soon as all its slices are complete."""
+    for sid in station_ids:
+        station = _station_state(state, sid)
+        if station.get('status') in ('complete', 'no_data'):
+            continue
+        if not slice_keys.issubset(set(station['done_slices'])):
+            station['status'] = (
+                'partial' if station.get('temp_bytes') else 'pending'
+            )
+            continue
         temp_path = output_dir / f'{sid}.csv.tmp'
         csv_path = output_dir / f'{sid}.csv'
+        if not temp_path.exists() or temp_path.stat().st_size == 0:
+            pd.DataFrame(columns=CSV_COLUMNS).to_csv(temp_path, index=False)
+            status = 'no_data'
+        else:
+            status = 'complete'
         try:
             os.replace(temp_path, csv_path)
         except OSError as error:
-            _progress_write(f'Finalize station {sid} failed: {error}')
-            failed_ids.append(sid)
-    return failed_ids
+            station['status'] = 'partial'
+            _record_failure(
+                state,
+                'finalize',
+                [sid],
+                str(error),
+                1,
+            )
+            continue
+        station['status'] = status
+        station['temp_bytes'] = 0
+
+
+def _configure_logger(output_dir: pathlib.Path):
+    """Configure one bounded log file and return its handler."""
+    logger = logging.getLogger('download_obs')
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = RotatingFileHandler(
+        output_dir / LOG_NAME,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=1,
+        encoding='utf-8',
+    )
+    handler.setFormatter(
+        logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    )
+    logger.addHandler(handler)
+    return logger, handler
+
+
+def _report(logger: logging.Logger, level: int, message: str) -> None:
+    """Emit a message once to the console and once to the bounded log."""
+    _progress_write(message)
+    logger.log(level, message)
 
 
 def main(
@@ -326,49 +437,34 @@ def main(
     time_end: arrow.Arrow,
     station_info_path: typing.Optional[str] = None,
     batch_size: typing.Optional[int] = None,
+    restart: bool = False,
+    max_attempts: int = 2,
+    retry_wait: float = 60.0,
 ) -> typing.List[str]:
     """
-    Download per-station hourly observations from CMADaaS.
+    Download observations serially and return only incomplete station IDs.
 
-    Read station IDs from a station information CSV file or from the meteva
-    built-in national station list. Request balanced station batches for
-    each half-year, defaulting to all stations in one request. Split each
-    response by station and append to temporary CSVs. Existing final files
-    are replaced only after every request and write succeeds. Stations
-    absent from every response are reported as failed.
-
-    The downloaded years are derived from the time range alone; the years
-    configured in config.yaml are not consulted.
-
-    Args:
-        output_path: Output directory for per-station CSV files.
-        time_start: Start of the download time range, inclusive.
-        time_end: End of the download time range, exclusive.
-        station_info_path: Station information CSV path containing the
-            '台站号' column. If None, use meb.station_国家站. Both modes use
-            SURF_CHN_MUL_HOR and the full ELEMENTS list.
-        batch_size: Maximum stations per request. None requests all stations.
-
-    Returns:
-        List of station IDs that could not be downloaded or finalized.
-
-    Raises:
-        ValueError: If the time range or batch size is invalid.
+    Existing temporary files and matching checkpoints are reused. Explicit
+    errors may be retried after ``retry_wait`` seconds; empty responses are
+    saved for a later resume instead of being retried immediately.
     """
-    # ---- 1. Resolve the requested time range ----
     if time_end <= time_start:
-        raise ValueError(
-            f'The end of the time range {time_end} must be later than '
-            f'the start {time_start}.'
-        )
-    start_time = time_start.format('YYYYMMDDHHmmss')
-    end_time = time_end.format('YYYYMMDDHHmmss')
-    print(f'Download time range: [{start_time}, {end_time})')
+        raise ValueError('The end time must be later than the start time.')
+    if max_attempts < 1:
+        raise ValueError('max_attempts must be positive.')
+    if retry_wait < 0:
+        raise ValueError('retry_wait must be non-negative.')
+
     time_slices = list(_half_year_slices(time_start, time_end))
     target_years = sorted({year for year, _, _ in time_slices})
+    print(
+        'Download time range: [{0}, {1})'.format(
+            time_start.format('YYYYMMDDHHmmss'),
+            time_end.format('YYYYMMDDHHmmss'),
+        )
+    )
     print(f'Download years: {target_years}')
 
-    # ---- 2. Read station IDs and use the common hourly dataset ----
     if station_info_path is None:
         station_df = meb.read_station(meb.station_国家站)
         station_column = 'id'
@@ -378,172 +474,255 @@ def main(
             station_info_path,
             encoding='gb2312',
             low_memory=False,
+            dtype={'台站号': str},
         )
         station_column = '台站号'
         station_source = f'station file {station_info_path}'
-    data_code = DATA_CODE
-    elements = ELEMENTS
     sid_list = station_df[station_column].astype(str).tolist()
-    selected_ids = set(sid_list)
     station_batches = _station_batches(sid_list, batch_size)
-    max_batch_size = max(
-        (len(batch) for batch in station_batches), default=0
-    )
     print(f'Loaded {len(sid_list)} stations from {station_source}')
-    print(f'CMADaaS data code: {data_code}')
+    print(f'CMADaaS data code: {DATA_CODE}')
     print(
         f'Station batches: {len(station_batches)} '
-        f'(balanced, at most {max_batch_size} stations each)'
+        f'(balanced, at most {batch_size or len(sid_list)} stations each)'
     )
 
-    # ---- 3. Download station batches and append per-station temp CSVs ----
     output_dir = pathlib.Path(output_path)
-    os.makedirs(output_dir, exist_ok=True)
-    # The total and every update use theoretical hourly records. Each
-    # half-year update is clipped to the requested time range.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    logger, handler = _configure_logger(output_dir)
+    signature = _job_signature(sid_list, time_start, time_end)
+    state = _load_state(output_dir, signature, restart)
+    for sid in sid_list:
+        _station_state(state, sid)
+    _repair_temp_csvs(output_dir, state)
+    _save_state(output_dir, state)
+    slice_keys = {
+        _slice_key(start, stop) for _, start, stop in time_slices
+    }
+    slice_hours = {
+        _slice_key(start, stop): int(
+            (stop - start).total_seconds() // 3600
+        )
+        for _, start, stop in time_slices
+    }
     range_hours = int((time_end - time_start).total_seconds() // 3600)
     record_total = len(sid_list) * range_hours
+    completed_records = sum(
+        slice_hours.get(key, 0)
+        for sid in sid_list
+        for key in _station_state(state, sid)['done_slices']
+    )
     print(
         f'Estimated records: {record_total} '
         f'({len(sid_list)} station(s) x {range_hours} hour(s))'
     )
-    _cleanup_temp_csvs(output_dir)
-    record_bar = None
-    keep_temp = False
-    try:
-        written_ids = set()
-        record_bar = _progress(
-            total=record_total, description='Downloading'
-        )
-        download_ok = True
-        for year, slice_start, slice_stop in time_slices:
-            request_hours = int(
-                (slice_stop - slice_start).total_seconds() // 3600
-            )
-            for station_ids in station_batches:
-                sta = _fetch_half_year(
-                    station_ids=station_ids,
-                    data_code=data_code,
-                    elements=elements,
-                    slice_start=slice_start,
-                    slice_stop=slice_stop,
-                )
-                if sta is None or len(sta) == 0:
-                    download_ok = False
-                    break
-                try:
-                    _append_station_csvs(
-                        data=sta,
-                        output_dir=output_dir,
-                        selected_ids=selected_ids,
-                        written_ids=written_ids,
-                    )
-                except Exception as error:
-                    _progress_write(
-                        f'Save year {year} data failed: {error}'
-                    )
-                    download_ok = False
-                else:
-                    if record_bar is not None:
-                        record_bar.update(
-                            len(station_ids) * request_hours
-                        )
-                        record_bar.set_postfix_str(
-                            str(year), refresh=False
-                        )
-                # Release this response before starting the next request.
-                del sta
-                if not download_ok:
-                    break
-            if not download_ok:
-                break
+    _report(
+        logger,
+        logging.INFO,
+        f'Run started: stations={len(sid_list)} slices={len(time_slices)} '
+        f'batches={len(station_batches)} restart={restart}',
+    )
 
-        # ---- 4. Finalize completed station CSVs ----
-        if download_ok:
-            failed_ids = sorted(selected_ids - written_ids)
-            failed_ids.extend(
-                _finalize_station_csvs(
-                    output_dir=output_dir,
-                    station_ids=written_ids,
-                )
+    record_bar = _progress(record_total, 'Downloading')
+    if record_bar is not None and completed_records:
+        record_bar.update(completed_records)
+    fetch_seconds = 0.0
+    write_seconds = 0.0
+    try:
+        for batch_index, batch in enumerate(station_batches, 1):
+            for year, slice_start, slice_stop in time_slices:
+                key = _slice_key(slice_start, slice_stop)
+                pending = [
+                    sid for sid in batch
+                    if key not in _station_state(state, sid)['done_slices']
+                ]
+                if not pending:
+                    continue
+                result = FetchResult('error', None, 'No request attempted')
+                attempts = 0
+                for attempts in range(1, max_attempts + 1):
+                    started = time.perf_counter()
+                    result = _fetch_half_year(
+                        pending, DATA_CODE, ELEMENTS,
+                        slice_start, slice_stop,
+                    )
+                    fetch_seconds += time.perf_counter() - started
+                    if result.status != 'error':
+                        break
+                    if attempts < max_attempts:
+                        _report(
+                            logger,
+                            logging.WARNING,
+                            f'Retrying error: year={year} '
+                            f'batch={batch_index}/{len(station_batches)} '
+                            f'attempt={attempts}/{max_attempts} '
+                            f'stations={len(pending)}',
+                        )
+                        time.sleep(retry_wait)
+                if result.status != 'ok':
+                    message = (
+                        f'Request incomplete: year={year} '
+                        f'batch={batch_index}/{len(station_batches)} '
+                        f'status={result.status} stations={len(pending)} '
+                        f'attempts={attempts} detail={result.message}'
+                    )
+                    _record_failure(
+                        state, key, pending, result.message, attempts
+                    )
+                    _save_state(output_dir, state)
+                    _report(logger, logging.ERROR, message)
+                    continue
+
+                before_sizes = {
+                    sid: int(_station_state(state, sid).get('temp_bytes', 0))
+                    for sid in pending
+                }
+                try:
+                    started = time.perf_counter()
+                    sizes = _append_station_csvs(
+                        result.data, output_dir, set(pending)
+                    )
+                    write_seconds += time.perf_counter() - started
+                except Exception as error:
+                    for sid, size in before_sizes.items():
+                        temp_path = output_dir / f'{sid}.csv.tmp'
+                        if temp_path.exists():
+                            with open(temp_path, 'r+b') as file_handle:
+                                file_handle.truncate(size)
+                    _record_failure(
+                        state, key, pending, str(error), attempts
+                    )
+                    _save_state(output_dir, state)
+                    _report(
+                        logger,
+                        logging.ERROR,
+                        f'Write failed: year={year} batch={batch_index} '
+                        f'stations={len(pending)} detail={error}',
+                    )
+                    continue
+
+                for sid in pending:
+                    station = _station_state(state, sid)
+                    station['done_slices'].append(key)
+                    station['temp_bytes'] = sizes.get(
+                        sid, int(station.get('temp_bytes', 0))
+                    )
+                    station['status'] = 'downloading'
+                _prune_failures(state)
+                _save_state(output_dir, state)
+                if record_bar is not None:
+                    record_bar.update(len(pending) * slice_hours[key])
+                    record_bar.set_postfix_str(
+                        f'{year} b{batch_index}/{len(station_batches)}',
+                        refresh=False,
+                    )
+
+            _finalize_ready_stations(
+                output_dir, state, batch, slice_keys
             )
-        else:
-            failed_ids = sid_list.copy()
+            _prune_failures(state)
+            _save_state(output_dir, state)
+            complete = sum(
+                _station_state(state, sid).get('status')
+                in ('complete', 'no_data')
+                for sid in batch
+            )
+            _report(
+                logger,
+                logging.INFO,
+                f'Batch finished: batch={batch_index}/{len(station_batches)} '
+                f'complete={complete}/{len(batch)}',
+            )
     except KeyboardInterrupt:
-        keep_temp = True
+        _save_state(output_dir, state)
+        _report(logger, logging.WARNING, 'Interrupted; checkpoints preserved')
         raise
     finally:
-        try:
-            if record_bar is not None:
-                record_bar.close()
-        finally:
-            if not keep_temp:
-                _cleanup_temp_csvs(output_dir)
+        if record_bar is not None:
+            record_bar.close()
+        logger.removeHandler(handler)
+        handler.close()
 
-    # ---- 5. Report incomplete stations ----
-    if failed_ids:
-        # A long failure list is unreadable; show only the first few IDs.
-        preview = ', '.join(failed_ids[:FAILED_PREVIEW])
-        suffix = ', ...' if len(failed_ids) > FAILED_PREVIEW else ''
-        print(
-            f'{len(failed_ids)} station(s) failed: {preview}{suffix}'
-        )
+    incomplete = sorted(
+        sid for sid in sid_list
+        if _station_state(state, sid).get('status')
+        not in ('complete', 'no_data')
+    )
+    complete = sum(
+        _station_state(state, sid).get('status') == 'complete'
+        for sid in sid_list
+    )
+    no_data = sum(
+        _station_state(state, sid).get('status') == 'no_data'
+        for sid in sid_list
+    )
+    print(
+        f'Download summary: complete={complete} no_data={no_data} '
+        f'incomplete={len(incomplete)} '
+        f'fetch_seconds={fetch_seconds:.1f} '
+        f'write_seconds={write_seconds:.1f}'
+    )
+    if incomplete:
+        preview = ', '.join(incomplete[:FAILED_PREVIEW])
+        suffix = ', ...' if len(incomplete) > FAILED_PREVIEW else ''
+        print(f'{len(incomplete)} station(s) incomplete: {preview}{suffix}')
     else:
         print('All stations downloaded successfully')
-    return failed_ids
+    return incomplete
+
+
+def _format_elapsed(seconds: float) -> str:
+    """Format total runtime without depending on legacy configuration."""
+    return f'{seconds / 3600.0:.6f} hours'
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description='Download CMADaaS observations to per-station CSV files.'
+        description='Download CMADaaS observations with resumable CSV output.'
     )
-    parser.add_argument(
-        '--national',
-        action='store_true',
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        '--national', action='store_true',
         help='Use the meteva national station list.',
     )
-    parser.add_argument(
-        '--batch-size',
-        type=int,
-        default=None,
-        metavar='N',
-        help='Maximum stations per request (default: all stations).',
+    group.add_argument(
+        '--station-info',
+        help='Station CSV containing the 台站号 column.',
     )
+    parser.add_argument('--batch-size', type=int, default=None, metavar='N')
     parser.add_argument(
-        'positionals',
-        nargs='+',
-        help='[output_path] time_start time_end, using YYYYMMDD dates.',
+        '--restart', action='store_true',
+        help='Explicitly discard incomplete state and temporary CSVs.',
     )
+    parser.add_argument('--max-attempts', type=int, default=2)
+    parser.add_argument('--retry-wait', type=float, default=60.0)
+    parser.add_argument('output_path')
+    parser.add_argument('time_start')
+    parser.add_argument('time_end')
     cli_args = parser.parse_args()
-    positionals = cli_args.positionals
-    if len(positionals) not in (2, 3):
-        parser.error('Expected [output_path] time_start time_end.')
     if cli_args.batch_size is not None and cli_args.batch_size < 1:
         parser.error('--batch-size must be a positive integer.')
+    if cli_args.max_attempts < 1:
+        parser.error('--max-attempts must be positive.')
+    if cli_args.retry_wait < 0:
+        parser.error('--retry-wait must be non-negative.')
 
     print('Program download_obs.py started')
     total_start = arrow.now()
-    cfg = utils.load_config()
-    station_info_path = (
-        None if cli_args.national else cfg['paths']['station_csv']
-    )
-    output_path = (
-        positionals[0]
-        if len(positionals) == 3
-        else cfg['paths']['sta_raw']
-    )
     failed = main(
-        output_path=output_path,
-        station_info_path=station_info_path,
-        time_start=arrow.get(positionals[-2], 'YYYYMMDD'),
-        time_end=arrow.get(positionals[-1], 'YYYYMMDD'),
+        output_path=cli_args.output_path,
+        station_info_path=cli_args.station_info,
+        time_start=arrow.get(cli_args.time_start, 'YYYYMMDD'),
+        time_end=arrow.get(cli_args.time_end, 'YYYYMMDD'),
         batch_size=cli_args.batch_size,
+        restart=cli_args.restart,
+        max_attempts=cli_args.max_attempts,
+        retry_wait=cli_args.retry_wait,
     )
-
     total_elapsed = (arrow.now() - total_start).total_seconds()
     print(
         'Program download_obs.py finished, total time '
-        f'{utils.format_time(total_elapsed)}'
+        f'{_format_elapsed(total_elapsed)}'
     )
     if failed:
-        sys.exit(1)
+        raise SystemExit(1)

@@ -8,7 +8,7 @@ matrix written by compute_mi_2411.py, and saves the figures to the result
 directory.
 
 Founded in 2026-10-29
-Modified in 2026-11-20
+Modified in 2026-11-23
 @author: yinlb
 """
 
@@ -67,7 +67,7 @@ FIG_FORMATS = [
     str(item).lstrip('.').lower() for item in _CFG['figure']['formats']
 ]
 if not FIG_FORMATS:
-    raise ValueError('figure.formats is empty in config/config.2411.yaml')
+    raise ValueError('figure.formats is empty in the active configuration')
 # Figure widths follow the journal layout: single column 7.8 cm, double 15 cm.
 CM = 1.0 / 2.54
 W_SINGLE = 7.8 * CM

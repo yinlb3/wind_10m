@@ -54,6 +54,7 @@ figures/*.jpg
 config/*.local.yaml
 config/*.local.windows.yaml
 config/*.local.linux.yaml
+config/**/*.local.yaml
 
 # Backup and temporary files
 *.bak
@@ -69,6 +70,11 @@ rules/
 
 # Experiment artifacts (caches, predictions, logs)
 artifacts/
+
+# Downloader state and temporary station CSVs
+.download_state.json
+.download_state.json.tmp
+*.csv.tmp
 
 # Temporary folders
 temp/

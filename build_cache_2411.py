@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Build per-station caches for the 2411-station experiment.
+Build optional per-station caches for the 2411-station experiment.
 
-For every station with both NWP factors and observations, read the factor
-array, clean and align the observations, and write one compressed npz file
-containing the interpolated factors and the encoded targets.
+The configured cache mode selects observation-only or full feature storage.
+Files are uncompressed NPZ archives; encoded targets are reconstructed on
+loading instead of being duplicated on disk.
 
 Founded in 2026-10-29
-Modified in 2026-11-19
+Modified in 2026-11-23
 @author: yinlb
 """
 
@@ -47,29 +47,48 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _cache_ready(path: pathlib.Path, mode: str, n_hour: int) -> bool:
+    """Return whether an existing cache satisfies the selected mode."""
+    if not path.exists():
+        return False
+    with np.load(path) as data:
+        if 'dir' not in data.files or 'spd' not in data.files:
+            return False
+        if data['dir'].shape[1] != n_hour:
+            return False
+        if mode == 'full':
+            return 'x' in data.files and data['x'].shape[1] == n_hour
+    return True
+
+
 def _summarize(arrays: dict, cfg: dict) -> dict:
     """
-    Compute quality statistics of one station cache.
+    Compute quality statistics of one station.
 
     Args:
-        arrays: Arrays returned by data_2411.build_station.
+        arrays: Arrays returned by the selected cache builder.
         cfg: Configuration dictionary.
 
     Returns:
         dict: Quality statistics.
     """
-    factors = arrays['x']
-    targets = arrays['y']
+    direction = arrays['dir']
     speed = arrays['spd']
-    calm = targets[..., 0] == cfg['obs']['calm_marker']
-    all_nan = np.isnan(factors).all(axis=2)
-    return {
+    calm = direction == cfg['obs']['calm_marker']
+    item = {
         'calm_frac': round(float(calm.mean()), 5),
         'obs_nan_frac': round(float(np.isnan(speed).mean()), 5),
-        'x_all_nan_frac': round(float(all_nan.mean()), 5),
-        'samples_all_nan': int(all_nan.all(axis=1).sum()),
         'speed_max': round(float(np.nanmax(speed)), 3),
     }
+    factors = arrays.get('x')
+    if factors is None:
+        item['x_all_nan_frac'] = None
+        item['samples_all_nan'] = None
+    else:
+        all_nan = np.isnan(factors).all(axis=2)
+        item['x_all_nan_frac'] = round(float(all_nan.mean()), 5)
+        item['samples_all_nan'] = int(all_nan.all(axis=1).sum())
+    return item
 
 
 def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
@@ -84,6 +103,15 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
         typing.List[dict]: Per-station quality report.
     """
     cfg = data_2411.load_config()
+    mode = data_2411.cache_mode(cfg)
+    if mode == 'none':
+        print(
+            "Cache building is disabled. Set cache.mode to 'obs' or 'full' "
+            'before running this script.',
+            flush=True,
+        )
+        return []
+
     station_ids = data_2411.available_station_ids(cfg)
     if limit:
         station_ids = station_ids[:limit]
@@ -93,19 +121,24 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
         return []
 
     print(
-        f'Stations: {total}  cache_dir: {cfg["paths"]["cache_dir"]}',
+        f'Stations: {total}  mode: {mode}  '
+        f'cache_dir: {cfg["paths"]["cache_dir"]}',
         flush=True,
     )
     report = list()
     skipped = 0
     start_all = time.time()
+    n_hour = int(data_2411.target_hours(cfg).size)
 
     for index, sta in enumerate(station_ids, 1):
         path = data_2411.cache_path(sta, cfg)
-        if path.exists() and not force:
+        if not force and _cache_ready(path, mode, n_hour):
             skipped += 1
             continue
-        arrays = data_2411.build_station(sta, cfg)
+        if mode == 'obs':
+            arrays = data_2411.build_observations(sta, cfg)
+        else:
+            arrays = data_2411.build_station(sta, cfg)
         if arrays is None:
             print(f'  {sta}: no observation, skipped', flush=True)
             continue

@@ -1,0 +1,46 @@
+# Validated reference dataset: 2411 stations, 2019-2024.
+# Paths, time dimensions, lead grids, and factor layouts belong here.
+
+dataset:
+  name: reference-2411
+
+paths:
+  data_dir: '<DATA_2411_DIR>'
+  sta_dir: '<STA_2411_DIR>'
+  cache_dir: '<CACHE_2411_DIR>'
+  pred_dir: '<PRED_2411_DIR>'
+  result_dir: '<RESULT_2411_DIR>'
+  station_list: 'docs/results/qc/stations_ok.txt'
+
+constants:
+  years: [2019, 2020, 2021, 2022, 2023, 2024]
+  n_samples: 4384
+  n_leads: 52
+  start_time: '2019-01-01 00:00:00'
+  cycle_hours: 12
+
+lead:
+  seg_a_start: 3
+  seg_a_step: 3
+  seg_a_count: 24
+  seg_b_start: 78
+  seg_b_step: 6
+  begin_hour: 12
+  end_hour: 36
+  # mode 24: 13-36 h hourly; mode 240: 3-240 h at 3 h steps.
+  mode: 240
+  grid_start: 3
+  grid_end: 240
+  grid_step: 3
+
+features:
+  surface: ['2T', 'MSL', '2D', '10U', '10V']
+  precip: true
+  levels: [1000, 925, 850, 700]
+
+obs:
+  calm_marker: 999017
+  miss_threshold: 999990
+  max_speed: 1000.0
+  calm_speed: 0.3
+  max_jump: 10.0

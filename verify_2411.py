@@ -9,7 +9,7 @@ statistics (year, month, lead time, hour of day, station, wind direction),
 and writes the results as CSV files.
 
 Founded in 2026-10-29
-Modified in 2026-11-05
+Modified in 2026-11-23
 @author: yinlb
 """
 
@@ -30,7 +30,7 @@ FILE_NAMES = {
     'LightGBM-A': 'lgb_a',
     'LightGBM-B': 'lgb_b',
 }
-# Beaufort-like wind-speed thresholds (m/s), identical to src/metrics.py.
+# Beaufort-like wind-speed thresholds (m/s).
 THRES = (0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2)
 N_GRADE = len(THRES) + 1
 N_DIR = 8
@@ -65,7 +65,7 @@ def dir_grade(
         include_calm: Count the calm-wind marker as a real direction. The
             marker is taken modulo 360 before binning (999017 -> 17 deg), so
             it lands in the north sector; this reproduces the legacy
-            97-station statistics. When False the marker is excluded.
+            calm-inclusive statistics. When False the marker is excluded.
 
     Returns:
         np.ndarray: Integer sector array.
@@ -1119,7 +1119,7 @@ def parse_args() -> argparse.Namespace:
         '--calm-mode', type=str, default='exclude',
         choices=('exclude', 'include'),
         help='exclude calm samples from the direction grades (default) or '
-             'count them as in the legacy 97-station statistics',
+             'count them as in the legacy calm-inclusive statistics',
     )
     return parser.parse_args()
 
