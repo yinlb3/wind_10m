@@ -1,4 +1,12 @@
-"""Unified command dispatcher for the configurable wind workflow."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Unified command dispatcher for the configurable wind workflow.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 import argparse
 import os
@@ -10,15 +18,15 @@ import typing
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
 COMMANDS = {
     'estimate-cache': 'cache_size.py',
-    'cache': 'build_cache_2411.py',
-    'qc': 'qc_stations_2411.py',
-    'train': 'train_2411.py',
-    'verify': 'verify_2411.py',
-    'mi': 'compute_mi_2411.py',
-    'plot': 'plot_2411.py',
+    'cache': 'build_cache.py',
+    'qc': 'qc_stations.py',
+    'train': 'train.py',
+    'verify': 'verify.py',
+    'mi': 'compute_mi.py',
+    'plot': 'plot.py',
     'stations': 'plot_stations.py',
     'benchmark': 'benchmark_schemes.py',
-    'predict-10day': 'predict_10day.py',
+    'product': 'predict_product.py',
     'download': 'download_obs.py',
 }
 

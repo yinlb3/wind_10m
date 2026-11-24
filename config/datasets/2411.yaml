@@ -19,16 +19,14 @@ constants:
   start_time: '2019-01-01 00:00:00'
   cycle_hours: 12
 
+# Source lead-time grid of data{sta}.npy: 24 slots at 3 h, then 28 at 6 h.
+# The evaluation grid is part of the dataset, not a run-wide switch.
 lead:
   seg_a_start: 3
   seg_a_step: 3
   seg_a_count: 24
   seg_b_start: 78
   seg_b_step: 6
-  begin_hour: 12
-  end_hour: 36
-  # mode 24: 13-36 h hourly; mode 240: 3-240 h at 3 h steps.
-  mode: 240
   grid_start: 3
   grid_end: 240
   grid_step: 3

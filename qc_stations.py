@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Station quality control for the 2411-station experiment.
+Station quality control for the station experiment.
 
-Read aligned observations from an existing cache when available, otherwise
-read and clean the raw observation CSV directly. Write a per-station quality
-table and keep stations whose missing fraction is within the threshold.
+Read aligned observations from an existing cache when it covers the active
+target grid, otherwise read and clean the raw observation CSV directly.
+Write a per-station quality table and keep stations whose missing fraction
+is within the threshold.
 
 Founded in 2026-11-04
-Modified in 2026-11-23
+Modified in 2026-11-24
 @author: yinlb
 """
 
@@ -19,7 +20,7 @@ import typing
 import numpy as np
 import pandas as pd
 
-from src import data_2411
+from src import workflow
 
 # Observation missing fractions reported as a histogram.
 BINS = (0.0, 0.1, 0.2, 0.3, 0.5, 1.01)
@@ -38,13 +39,16 @@ def station_stats(sta: str, cfg: dict) -> typing.Optional[dict]:
         typing.Optional[dict]: Statistics, or None when observations are
         unavailable.
     """
-    path = data_2411.cache_path(sta, cfg)
+    path = workflow.cache_path(sta, cfg)
+    n_hour = int(workflow.target_hours(cfg).size)
+    direction = None
     if path.exists():
         with np.load(path) as data:
-            direction = data['dir']
-            speed = data['spd']
-    else:
-        direction, speed, _ = data_2411.load_obs(sta, cfg)
+            if data['dir'].shape[1] == n_hour:
+                direction = data['dir']
+                speed = data['spd']
+    if direction is None:
+        direction, speed, _ = workflow.load_obs(sta, cfg)
         if direction is None:
             return None
     nan_frac = float(np.isnan(speed).mean())
@@ -67,8 +71,8 @@ def main(max_missing: float = 0.30) -> None:
     Args:
         max_missing: Largest tolerated observation missing fraction.
     """
-    cfg = data_2411.load_config()
-    station_all = data_2411.available_station_ids(cfg)
+    cfg = workflow.load_config()
+    station_all = workflow.available_ids(cfg)
     total = len(station_all)
     print('Stations to inspect: {0}'.format(total), flush=True)
 
@@ -129,9 +133,9 @@ def main(max_missing: float = 0.30) -> None:
 
 
 if __name__ == '__main__':
-    print('Program qc_stations_2411.py started', flush=True)
+    print('Program qc_stations.py started', flush=True)
     parser = argparse.ArgumentParser(
-        description='Run station quality control for the 2411 experiment'
+        description='Run station quality control for the configured experiment'
     )
     parser.add_argument('--max-missing', type=float, default=0.30)
     args = parser.parse_args()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Verification for the 2411-station experiment.
+Verification for the station experiment.
 
 Loads the per-fold predictions and the aligned observations, computes the
 overall scores (CC, MAE, RMSE, MRE, OA, kappa, TS) and the grouped RMSE
@@ -9,7 +9,7 @@ statistics (year, month, lead time, hour of day, station, wind direction),
 and writes the results as CSV files.
 
 Founded in 2026-10-29
-Modified in 2026-11-23
+Modified in 2026-11-24
 @author: yinlb
 """
 
@@ -20,7 +20,8 @@ import typing
 import numpy as np
 import pandas as pd
 
-from src import data_2411
+from src import workflow
+from wind10m.memory import station_block_size
 
 MODELS = ('ECMWF-IFS', 'PDFM', 'MLR', 'LightGBM-A', 'LightGBM-B')
 FILE_NAMES = {
@@ -142,7 +143,7 @@ def threat_score(cm: np.ndarray) -> np.ndarray:
     return ts
 
 
-def cumulative_threat_score(cm: np.ndarray) -> np.ndarray:
+def ts_cumulative(cm: np.ndarray) -> np.ndarray:
     """
     Compute threat scores for exceedance of each wind-speed threshold.
 
@@ -253,7 +254,7 @@ def scores(
 
     cm_ws = confusion(speed_grade(obs), speed_grade(pred), N_GRADE)
     out['ws_oa'], out['ws_kappa'] = oa_kappa(cm_ws)
-    ts_val = cumulative_threat_score(cm_ws)
+    ts_val = ts_cumulative(cm_ws)
     for grade in range(1, N_GRADE):
         out['ws_ts{0}'.format(grade)] = float(ts_val[grade - 1])
 
@@ -281,15 +282,15 @@ def load_obs(
         typing.Tuple[np.ndarray, np.ndarray]: Direction and speed arrays
         with shape (n_samples, n_hours, n_stations).
     """
-    slices = data_2411.year_slices(cfg)
+    slices = workflow.year_slices(cfg)
     start, end = slices[year]
     n_sample = end - start
     n_station = len(station_ids)
-    n_hour = int(data_2411.target_hours(cfg).size)
+    n_hour = int(workflow.target_hours(cfg).size)
     direction = np.full((n_sample, n_hour, n_station), np.nan, np.float32)
     speed = np.full((n_sample, n_hour, n_station), np.nan, np.float32)
     for index, sta in enumerate(station_ids):
-        arrays = data_2411.load_arrays(sta, cfg)
+        arrays = workflow.load_arrays(sta, cfg)
         if arrays is None:
             continue
         direction[:, :, index] = arrays['dir'][start:end]
@@ -310,29 +311,41 @@ def pred_path(cfg: dict, model: str, year: int) -> pathlib.Path:
         pathlib.Path: Prediction file path.
     """
     return (
-        data_2411.pred_root(cfg)
+        workflow.pred_root(cfg)
         / '{0}_{1}.npy'.format(FILE_NAMES[model], year)
     )
 
 
 def load_pred(
-    cfg: dict, model: str, year: int
+    cfg: dict, model: str, year: int, n_station: int = 0
 ) -> typing.Optional[np.ndarray]:
     """
-    Load one model prediction file.
+    Load one model prediction file as a read-only memory map.
 
     Args:
         cfg: Configuration dictionary.
         model: Model name.
         year: Held-out year.
+        n_station: Stations required by the current run (0 means all).
 
     Returns:
         typing.Optional[np.ndarray]: Prediction array or None when missing.
+
+    Raises:
+        ValueError: If the file holds fewer stations than the run requires.
     """
     path = pred_path(cfg, model, year)
     if not path.exists():
         return None
-    return np.load(path)
+    pred = np.load(path, mmap_mode='r')
+    if n_station and pred.shape[2] < n_station:
+        raise ValueError(
+            '{0} holds {1} stations but {2} are required; rerun training '
+            'with the same --limit'.format(path.name, pred.shape[2], n_station)
+        )
+    if n_station and pred.shape[2] > n_station:
+        pred = pred[:, :, :n_station, :]
+    return pred
 
 
 def time_labels(cfg: dict) -> typing.Dict[str, np.ndarray]:
@@ -346,9 +359,9 @@ def time_labels(cfg: dict) -> typing.Dict[str, np.ndarray]:
         typing.Dict[str, np.ndarray]: Month, hour-of-day and lead-time
         labels with shape (n_samples, n_hours).
     """
-    times = data_2411.sample_times(cfg)
+    times = workflow.sample_times(cfg)
     n_sample = int(cfg['constants']['n_samples'])
-    n_hour = int(data_2411.target_hours(cfg).size)
+    n_hour = int(workflow.target_hours(cfg).size)
     # months arrive as 1-12, but group_rmse expects zero-based group ids.
     month = times.month.to_numpy().reshape(n_sample, n_hour) - 1
     hour = times.hour.to_numpy().reshape(n_sample, n_hour)
@@ -520,7 +533,7 @@ class ScoreAcc(object):
             self.s_mre / self.n_mre if self.n_mre > 0 else np.nan
         )
         out['ws_oa'], out['ws_kappa'] = oa_kappa(self.cm_ws)
-        ts_val = cumulative_threat_score(self.cm_ws)
+        ts_val = ts_cumulative(self.cm_ws)
         for grade in range(1, N_GRADE):
             out['ws_ts{0}'.format(grade)] = float(ts_val[grade - 1])
         n_wd = max(self.n_wd, 1)
@@ -706,6 +719,7 @@ def main(
     limit: int = 0,
     models: typing.Optional[typing.Sequence[str]] = None,
     calm_mode: str = 'exclude',
+    years_wanted: typing.Optional[typing.Sequence[int]] = None,
 ) -> None:
     """
     Run own-sample and common-sample verification and write result tables.
@@ -715,12 +729,13 @@ def main(
         models: Model names to evaluate (None means all).
         calm_mode: 'exclude' drops calm samples from the direction grades;
             'include' affects only the legacy own-sample tables.
+        years_wanted: Held-out years to evaluate (None means every fold).
     """
-    cfg = data_2411.load_config()
-    station_ids = data_2411.station_ids(cfg)
+    cfg = workflow.load_config()
+    station_ids = workflow.station_ids(cfg)
     if limit:
         station_ids = station_ids[:limit]
-    slices = data_2411.year_slices(cfg)
+    slices = workflow.year_slices(cfg)
     years = sorted(slices.keys())
     selected = tuple(models) if models else MODELS
     unknown = [name for name in selected if name not in MODELS]
@@ -738,6 +753,9 @@ def main(
         year for year in years
         if any(pred_path(cfg, name, year).exists() for name in selected)
     ]
+    if years_wanted:
+        keep_years = set(int(year) for year in years_wanted)
+        years = [year for year in years if year in keep_years]
     if not years:
         print('No prediction file found', flush=True)
         return
@@ -753,7 +771,7 @@ def main(
         ),
         flush=True,
     )
-    result_dir = data_2411.result_root(cfg)
+    result_dir = workflow.result_root(cfg)
     table_dir = result_dir / 'tables'
     table_dir.mkdir(parents=True, exist_ok=True)
 
@@ -765,7 +783,7 @@ def main(
     }
     rows_year_own = list()
     rows_year_common = list()
-    n_hour = int(data_2411.target_hours(cfg).size)
+    n_hour = int(workflow.target_hours(cfg).size)
     grouped = {
         name: {
             key: [np.zeros(n), np.zeros(n, dtype=np.int64)]
@@ -795,76 +813,112 @@ def main(
     }
     found = set()
 
+    block_size = station_block_size(len(station_ids), n_hour, len(selected))
+    print('Station block: {0}'.format(block_size), flush=True)
     for year in years:
-        ob_dir, ob_spd = load_obs(cfg, station_ids, year)
         start, end = slices[year]
         predictions = {
-            name: load_pred(cfg, name, year) for name in selected
+            name: load_pred(cfg, name, year, len(station_ids))
+            for name in selected
         }
         use_common = common_mode and year in common_years
-        if use_common:
-            mask_ws_common, mask_wd_common = common_masks(
-                ob_dir, ob_spd, list(predictions.values()), marker
+        accumulators = {
+            name: (
+                ScoreAcc(marker, calm_mode),
+                ScoreAcc(marker, 'exclude') if use_common else None,
             )
+            for name in selected
+        }
+        for block_start in range(0, len(station_ids), block_size):
+            block_end = min(block_start + block_size, len(station_ids))
+            block_station = station_ids[block_start:block_end]
+            block_pred = {
+                name: None if pred is None
+                else pred[:, :, block_start:block_end, :]
+                for name, pred in predictions.items()
+            }
+            mask_ws_common = mask_wd_common = None
+            if use_common:
+                ob_dir, ob_spd = load_obs(cfg, block_station, year)
+                mask_ws_common, mask_wd_common = common_masks(
+                    ob_dir, ob_spd,
+                    [pred for pred in block_pred.values()
+                     if pred is not None],
+                    marker,
+                )
+            elif common_mode:
+                continue
+            else:
+                ob_dir, ob_spd = load_obs(cfg, block_station, year)
+            for name, pred in block_pred.items():
+                if pred is None:
+                    continue
+                acc_own, acc_common = accumulators[name]
+                pr_dir = pred[..., 0]
+                pr_spd = pred[..., 1]
+                acc_own.add(ob_dir, ob_spd, pr_dir, pr_spd)
+                if use_common:
+                    acc_common.add(
+                        ob_dir, ob_spd, pr_dir, pr_spd,
+                        mask_ws=mask_ws_common, mask_wd=mask_wd_common,
+                    )
+                    mask_ws = mask_ws_common
+                    mask_wd = mask_wd_common
+                else:
+                    mask_ws = np.isfinite(ob_spd) & np.isfinite(pr_spd)
+                    mask_wd = None
+
+                error_ws = np.where(mask_ws, pr_spd - ob_spd, np.nan)
+                delta_wd = circular_delta(ob_dir, pr_dir, marker)
+                if mask_wd is not None:
+                    delta_wd = np.where(mask_wd, delta_wd, np.nan)
+                for key, n_group in (
+                    ('month', 12), ('hour', 24), ('lead', n_hour)
+                ):
+                    lab = labels[key][start:end][..., None]
+                    sse, count = group_error_stats(error_ws, lab, n_group)
+                    grouped[name][key][0] += sse
+                    grouped[name][key][1] += count
+                    sse, count = group_error_stats(delta_wd, lab, n_group)
+                    grouped_dir[name][key][0] += sse
+                    grouped_dir[name][key][1] += count
+
+                station[name][0][block_start:block_end] += np.nansum(
+                    error_ws ** 2, axis=(0, 1)
+                )
+                station[name][1][block_start:block_end] += np.isfinite(
+                    error_ws
+                ).sum(axis=(0, 1))
+                station[name][2][block_start:block_end] += np.nansum(
+                    delta_wd ** 2, axis=(0, 1)
+                )
+                station[name][3][block_start:block_end] += np.isfinite(
+                    delta_wd
+                ).sum(axis=(0, 1))
+
+                sectors = dir_grade(ob_dir)
+                sse, count = group_error_stats(error_ws, sectors, N_DIR)
+                sector[name][0][0] += sse
+                sector[name][1][0] += count
+                sse, count = group_error_stats(delta_wd, sectors, N_DIR)
+                sector[name][0][1] += sse
+                sector[name][1][1] += count
         for name in selected:
-            pred = predictions[name]
-            if pred is None:
+            if predictions[name] is None:
                 continue
             found.add(name)
-            pr_dir = pred[..., 0]
-            pr_spd = pred[..., 1]
-            acc_own = ScoreAcc(marker, calm_mode)
-            acc_own.add(ob_dir, ob_spd, pr_dir, pr_spd)
+            acc_own, acc_common = accumulators[name]
             total_own[name].merge(acc_own)
             item = acc_own.result()
             item['model'] = name
             item['year'] = year
             rows_year_own.append(item)
-
             if use_common:
-                acc = ScoreAcc(marker, 'exclude')
-                acc.add(
-                    ob_dir, ob_spd, pr_dir, pr_spd,
-                    mask_ws=mask_ws_common, mask_wd=mask_wd_common,
-                )
-                total_common[name].merge(acc)
-                item = acc.result()
+                total_common[name].merge(acc_common)
+                item = acc_common.result()
                 item['model'] = name
                 item['year'] = year
                 rows_year_common.append(item)
-                mask_ws = mask_ws_common
-                mask_wd = mask_wd_common
-            elif not common_mode:
-                mask_ws = np.isfinite(ob_spd) & np.isfinite(pr_spd)
-                mask_wd = None
-            else:
-                continue
-
-            error_ws = np.where(mask_ws, pr_spd - ob_spd, np.nan)
-            delta_wd = circular_delta(ob_dir, pr_dir, marker)
-            if mask_wd is not None:
-                delta_wd = np.where(mask_wd, delta_wd, np.nan)
-            for key, n_group in (('month', 12), ('hour', 24), ('lead', n_hour)):
-                lab = labels[key][start:end, :, None]
-                sse, count = group_error_stats(error_ws, lab, n_group)
-                grouped[name][key][0] += sse
-                grouped[name][key][1] += count
-                sse, count = group_error_stats(delta_wd, lab, n_group)
-                grouped_dir[name][key][0] += sse
-                grouped_dir[name][key][1] += count
-
-            station[name][0] += np.nansum(error_ws ** 2, axis=(0, 1))
-            station[name][1] += np.isfinite(error_ws).sum(axis=(0, 1))
-            station[name][2] += np.nansum(delta_wd ** 2, axis=(0, 1))
-            station[name][3] += np.isfinite(delta_wd).sum(axis=(0, 1))
-
-            sectors = dir_grade(ob_dir)
-            sse, count = group_error_stats(error_ws, sectors, N_DIR)
-            sector[name][0][0] += sse
-            sector[name][1][0] += count
-            sse, count = group_error_stats(delta_wd, sectors, N_DIR)
-            sector[name][0][1] += sse
-            sector[name][1][1] += count
         print('Verified year {0}'.format(year), flush=True)
 
     if not found:
@@ -936,7 +990,8 @@ def main(
             for matrix in grade_source[name].cm_wd_grade[1:]
         ]
         count_data[name] = [
-            float(matrix.sum()) for matrix in grade_source[name].cm_wd_grade[1:]
+            float(matrix.sum())
+            for matrix in grade_source[name].cm_wd_grade[1:]
         ]
     if grade_data:
         index = range(1, N_GRADE)
@@ -1041,7 +1096,7 @@ def main(
         )
 
     summary = list()
-    summary.append('2411-station verification summary')
+    summary.append('station verification summary')
     summary.append('=' * 32)
     summary.append(
         'stations {0}  folds {1}  common_folds {2}  mode {3}'.format(
@@ -1111,10 +1166,14 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace: Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description='Verify 2411-station correction models'
+        description='Verify station correction models'
     )
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--models', type=str, default='')
+    parser.add_argument(
+        '--years', type=str, default='',
+        help='comma-separated held-out years (empty means every fold)',
+    )
     parser.add_argument(
         '--calm-mode', type=str, default='exclude',
         choices=('exclude', 'include'),
@@ -1125,15 +1184,19 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == '__main__':
-    print('Program verify_2411.py started', flush=True)
+    print('Program verify.py started', flush=True)
     args = parse_args()
     model_list = [
         item.strip() for item in args.models.split(',') if item.strip()
+    ]
+    year_list = [
+        int(item.strip()) for item in args.years.split(',') if item.strip()
     ]
     main(
         limit=args.limit,
         models=model_list or None,
         calm_mode=args.calm_mode,
+        years_wanted=year_list or None,
     )
 
 

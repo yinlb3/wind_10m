@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Draw the figures of the 2411-station experiment.
+Draw the figures of the station experiment.
 
-Reads the CSV tables written by verify_2411.py plus the mutual-information
-matrix written by compute_mi_2411.py, and saves the figures to the result
+Reads the CSV tables written by verify.py plus the mutual-information
+matrix written by compute_mi.py, and saves the figures to the result
 directory.
 
 Founded in 2026-10-29
-Modified in 2026-11-23
+Modified in 2026-11-24
 @author: yinlb
 """
 
@@ -24,17 +24,16 @@ from scipy import stats
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from src import data_2411  # noqa: E402
+from src import workflow  # noqa: E402
 
-MODELS = ['ECMWF-IFS', 'PDFM', 'MLR', 'LightGBM-A', 'LightGBM-B']
-# Colours follow the paper; the LightGBM-B variant of this reproduction is
-# drawn in purple because the paper has no second LightGBM branch.
-COLORS = ['blue', 'green', 'yellow', 'red', 'purple']
+# The manuscript compares one LightGBM model with the three baselines; the
+# vector branch of the angle experiment appears in Table 4 only.
+MODELS = ['ECMWF-IFS', 'PDFM', 'MLR', 'LightGBM']
+COLORS = ['blue', 'green', 'yellow', 'red']
+RETIRED = 'LightGBM-B'
 SECTORS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 SPEED_LABELS = [
-    '≥0.3 m·s$^{-1}$', '≥1.6 m·s$^{-1}$', '≥3.4 m·s$^{-1}$',
-    '≥5.5 m·s$^{-1}$', '≥8.0 m·s$^{-1}$', '≥10.8 m·s$^{-1}$',
-    '≥13.9 m·s$^{-1}$', '≥17.2 m·s$^{-1}$',
+    '≥1级', '≥2级', '≥3级', '≥4级', '≥5级', '≥6级', '≥7级', '≥8级',
 ]
 GRADE_LABELS = [
     '1级', '2级', '3级', '4级', '5级', '6级', '7级', '8级及以上',
@@ -57,21 +56,33 @@ for _level in (1000, 925, 850, 700):
             '{0}_{1}hPa'.format(_tag, _level)
         )
 
+plt.rcParams['font.family'] = 'sans-serif'
+# SimHei first so that every Chinese glyph has a real font; the Latin labels
+# and the units in math mode keep the Times look through the STIX fontset.
 plt.rcParams['font.sans-serif'] = [
     'SimHei', 'Microsoft YaHei', 'DejaVu Sans'
 ]
+plt.rcParams['mathtext.fontset'] = 'stix'
 plt.rcParams['axes.unicode_minus'] = False
-_CFG = data_2411.load_config()
+_CFG = workflow.load_config()
 FIG_DPI = int(_CFG['figure']['dpi'])
 FIG_FORMATS = [
     str(item).lstrip('.').lower() for item in _CFG['figure']['formats']
 ]
 if not FIG_FORMATS:
     raise ValueError('figure.formats is empty in the active configuration')
-# Figure widths follow the journal layout: single column 7.8 cm, double 15 cm.
-CM = 1.0 / 2.54
-W_SINGLE = 7.8 * CM
-W_DOUBLE = 15.0 * CM
+# The canvas matches the printed size: one sub figure is 7.5 cm wide (half of
+# a 15 cm two-column figure) and a single figure is 7.8 cm. Keeping the canvas
+# at the printed size is what makes one type size readable in every figure.
+CM = 2.54
+WIDE_SIZE = (7.5 / CM, 4.6 / CM)
+SQUARE_SIZE = (7.5 / CM, 7.5 / CM)
+RADAR_SIZE = (7.5 / CM, 7.5 / CM)
+DEFAULT_SIZE = (6.4, 4.8)
+# One type scale for every figure.
+FS_LABEL = 7
+FS_TICK = 6.5
+FS_LEGEND = 6.5
 
 # Below this station count the station-wise distribution and the high speed
 # grades are not representative, so the figures are marked as provisional.
@@ -95,24 +106,11 @@ def save_fig(
         name: File stem without the extension.
         kwargs: Extra arguments passed to ``savefig``.
     """
+    kwargs.setdefault('bbox_inches', 'tight')
+    kwargs.setdefault('pad_inches', 0.02)
     for ext in FIG_FORMATS:
         path = fig_dir / '{0}.{1}'.format(name, ext)
         fig.savefig(path, dpi=FIG_DPI, **kwargs)
-
-
-def label_panels(axes: np.ndarray, tags: str) -> None:
-    """
-    Add self-contained panel labels to a composite figure.
-
-    Args:
-        axes: Array of matplotlib axes.
-        tags: One letter per panel, in row-major order.
-    """
-    for axis, tag in zip(axes.flat, tags):
-        axis.text(
-            -0.06, 1.06, '({0})'.format(tag), transform=axis.transAxes,
-            ha='left', va='top', fontsize=9,
-        )
 
 
 def _read(path: pathlib.Path) -> typing.Optional[pd.DataFrame]:
@@ -128,7 +126,13 @@ def _read(path: pathlib.Path) -> typing.Optional[pd.DataFrame]:
     if not path.exists():
         print('  missing {0}'.format(path.name), flush=True)
         return None
-    return pd.read_csv(path, encoding='utf-8-sig')
+    table = pd.read_csv(path, encoding='utf-8-sig')
+    table = table.rename(columns={'LightGBM-A': 'LightGBM'})
+    table = table.drop(columns=[RETIRED], errors='ignore')
+    if 'model' in table.columns:
+        table = table[table['model'] != RETIRED]
+        table['model'] = table['model'].replace({'LightGBM-A': 'LightGBM'})
+    return table
 
 
 def plot_mi(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
@@ -139,13 +143,13 @@ def plot_mi(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     paper before the matrix is drawn.
 
     Args:
-        result_dir: Directory holding mi_2411.npy.
+        result_dir: Directory holding mi.npy.
         fig_dir: Output directory for figures.
     """
-    path = result_dir / 'mi_2411.npy'
-    names_path = result_dir / 'mi_2411_names.txt'
+    path = result_dir / 'mi.npy'
+    names_path = result_dir / 'mi_names.txt'
     if not path.exists() or not names_path.exists():
-        print('  missing mi_2411.npy', flush=True)
+        print('  missing mi.npy', flush=True)
         return
     matrix = np.load(path)
     names = names_path.read_text(encoding='utf-8').split()
@@ -153,7 +157,7 @@ def plot_mi(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     matrix = matrix[np.ix_(index, index)]
     labels = [FACTOR_LABELS[names[item]] for item in index]
 
-    fig, axis = plt.subplots(figsize=(W_DOUBLE, W_DOUBLE * 9.0 / 11.0))
+    fig, axis = plt.subplots(figsize=DEFAULT_SIZE)
     image = axis.imshow(matrix, cmap='Reds', vmin=0)
     ticks = np.arange(len(labels))
     axis.set_xticks(
@@ -165,8 +169,10 @@ def plot_mi(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     axis.set_yticks(ticks - 0.5, minor=True)
     axis.grid(which='minor', color='white', linewidth=0.8)
     axis.tick_params(which='minor', length=0)
-    fig.colorbar(image, ax=axis, shrink=0.75)
-    fig.tight_layout()
+    fig.colorbar(image, ax=axis, shrink=0.75).ax.tick_params(
+        labelsize=FS_TICK
+    )
+    fig.tight_layout(pad=0.1)
     save_fig(fig, fig_dir, 'fig1_mi')
     plt.close(fig)
 
@@ -200,16 +206,22 @@ def _grouped_bars(
         )
     axis.set_xticks(x_val, ticks)
     axis.set_xlim(-0.55, table.shape[0] - 0.45)
-    axis.set_xlabel(xlabel)
-    axis.set_ylabel(ylabel)
+    axis.set_xlabel(xlabel, fontsize=FS_LABEL)
+    axis.set_ylabel(ylabel, fontsize=FS_LABEL)
+    axis.tick_params(labelsize=FS_TICK)
     if ylim is not None:
         axis.set_ylim(0, ylim)
     if legend == 'inside':
-        axis.legend(fontsize=8, loc='upper right')
+        axis.legend(
+            fontsize=FS_LEGEND, loc='upper right', frameon=False,
+            handlelength=1.2, handletextpad=0.4, borderpad=0.2,
+        )
     else:
         axis.legend(
             loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=len(names),
-            fontsize=7, frameon=True, borderaxespad=0.2,
+            fontsize=FS_LEGEND, frameon=False, borderaxespad=0.1,
+            handlelength=1.2, handleheight=0.8, handletextpad=0.4,
+            columnspacing=1.0,
         )
 
 
@@ -244,12 +256,12 @@ def plot_ts(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
                 flush=True,
             )
 
-    fig, axis = plt.subplots(figsize=(W_SINGLE, W_SINGLE * 3.8 / 9.0))
+    fig, axis = plt.subplots(figsize=WIDE_SIZE)
     _grouped_bars(
-        axis, values, SPEED_LABELS, 'TS', '风速阈值（m·s$^{-1}$）', ylim=1.0,
-        legend='inside',
+        axis, values, SPEED_LABELS, 'TS', '风速等级', ylim=1.0,
+        legend='top',
     )
-    fig.tight_layout()
+    fig.tight_layout(pad=0.1)
     save_fig(fig, fig_dir, 'fig2a_ts_grade')
     plt.close(fig)
 
@@ -282,12 +294,11 @@ def plot_kappa(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
                     flush=True,
                 )
     ticks = GRADE_LABELS[:table.shape[0]]
-    fig, axis = plt.subplots(figsize=(W_SINGLE, W_SINGLE * 3.8 / 9.0))
+    fig, axis = plt.subplots(figsize=WIDE_SIZE)
     _grouped_bars(
-        axis, table, ticks, 'kappa', '风速等级', ylim=1.0, legend='inside',
+        axis, table, ticks, 'kappa', '风速等级', ylim=1.0, legend='top',
     )
-    axis.legend(fontsize=8, loc='upper left')
-    fig.tight_layout()
+    fig.tight_layout(pad=0.1)
     save_fig(fig, fig_dir, 'fig2b_kappa_grade')
     plt.close(fig)
 
@@ -308,7 +319,7 @@ def _panel(
         ylim: Upper limit of the y axis, auto when None.
     """
     _grouped_bars(
-        axis, table, ticks, ylabel, xlabel, ylim=ylim, legend='inside'
+        axis, table, ticks, ylabel, xlabel, ylim=ylim, legend='top'
     )
 
 
@@ -336,58 +347,79 @@ def plot_rmse_panels(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     year_ticks = ['{0}年'.format(int(item)) for item in year_ws.index]
     month_ticks = ['{0}月'.format(i) for i in range(1, month.shape[0] + 1)]
 
-    fig, axes = plt.subplots(2, 2, figsize=(W_DOUBLE, W_DOUBLE * 0.78))
-    fig.subplots_adjust(hspace=0.55, wspace=0.28)
-    _panel(axes[0, 0], year_ws, year_ticks, '年份', '风速 RMSE（m·s$^{-1}$）',
-           1.6)
-    _panel(axes[0, 1], year_wd, year_ticks, '年份', '风向 RMSE（°）')
-    _panel(axes[1, 0], month, month_ticks, '月份', '风速 RMSE（m·s$^{-1}$）',
-           1.6)
-    _panel(axes[1, 1], month_dir, month_ticks, '月份', '风向 RMSE（°）',
-           100.0)
-    label_panels(axes, 'abcd')
-    save_fig(fig, fig_dir, 'fig3_rmse_panels', bbox_inches='tight')
-    plt.close(fig)
+    items = (
+        (year_ws, year_ticks, '年份', '风速 RMSE（m·s$^{-1}$）', None,
+         'fig3a_year_speed'),
+        (year_wd, year_ticks, '年份', '风向 RMSE（°）', 100.0,
+         'fig3b_year_dir'),
+        (month, month_ticks, '月份', '风速 RMSE（m·s$^{-1}$）', None,
+         'fig3c_month_speed'),
+        (month_dir, month_ticks, '月份', '风向 RMSE（°）', 100.0,
+         'fig3d_month_dir'),
+    )
+    for table, ticks, xlabel, ylabel, ylim, name in items:
+        fig, axis = plt.subplots(figsize=WIDE_SIZE)
+        _panel(axis, table, ticks, xlabel, ylabel, ylim)
+        fig.tight_layout(pad=0.1)
+        save_fig(fig, fig_dir, name)
+        plt.close(fig)
 
 
-def _line_panel(
+def _bar_panel(
     axis: plt.Axes,
     table: pd.DataFrame,
     x_val: np.ndarray,
     xlabel: str,
     ylabel: str,
+    ticks: typing.Optional[typing.Sequence[float]] = None,
+    labels: typing.Optional[typing.Sequence[str]] = None,
+    group_width: float = 0.8,
+    span: typing.Optional[typing.Tuple[float, float]] = None,
 ) -> None:
     """
-    Draw one RMSE panel as lines, one line per model.
+    Draw one grouped bar panel, one bar per model and group.
 
     Args:
         axis: Target axis.
-        table: Table with one column per model, indexed by the group value.
+        table: Table with one column per model and one row per group.
         x_val: X coordinates of the rows.
         xlabel: X axis label.
         ylabel: Y axis label.
+        ticks: Tick positions, one per day or per forecast hour.
+        labels: Tick labels matching ticks.
+        group_width: Width of one group of bars in x units.
+        span: X axis limits, computed from the data when None.
     """
-    for model in MODELS:
-        if model not in table.columns:
-            continue
-        axis.plot(
-            x_val, table[model].to_numpy(dtype=float),
-            color=COLORS[MODELS.index(model)], marker='o', markersize=1.8,
-            linewidth=0.9, label=model,
+    names = [model for model in MODELS if model in table.columns]
+    width = group_width / max(len(names), 1)
+    for index, model in enumerate(names):
+        offset = (index - (len(names) - 1) / 2.0) * width
+        axis.bar(
+            x_val + offset, table[model].to_numpy(dtype=float),
+            width=width, color=COLORS[MODELS.index(model)], label=model,
         )
-    axis.set_xlabel(xlabel, fontsize=7)
-    axis.set_ylabel(ylabel, fontsize=7)
-    axis.tick_params(labelsize=6.5)
-    axis.grid(alpha=0.3, linewidth=0.5)
+    if ticks is not None:
+        axis.set_xticks(ticks, labels)
+    if span is not None:
+        axis.set_xlim(span)
+    axis.set_xlabel(xlabel, fontsize=FS_LABEL)
+    axis.set_ylabel(ylabel, fontsize=FS_LABEL)
+    axis.tick_params(labelsize=FS_TICK)
+    axis.grid(axis='y', alpha=0.3, linewidth=0.6)
     axis.legend(
-        fontsize=5.5, ncol=3, loc='upper center',
-        bbox_to_anchor=(0.5, 1.24), frameon=False,
+        fontsize=FS_LEGEND, ncol=len(names), loc='lower center',
+        bbox_to_anchor=(0.5, 1.0), frameon=False, borderaxespad=0.1,
+        handlelength=1.2, handleheight=0.8, handletextpad=0.4,
+        columnspacing=1.0,
     )
 
 
 def plot_rmse_lines(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     """
-    Draw the lead-time and hour-of-day RMSE as separate line charts.
+    Draw the lead-time and hour-of-day RMSE as bar charts (fig3e-3h).
+
+    The lead time is grouped by day, with one bar per 3 h slot, so the upward
+    drift with lead time and the diurnal cycle are both visible.
 
     Args:
         result_dir: Directory holding the group tables.
@@ -404,17 +436,47 @@ def plot_rmse_lines(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     lead_dir = tables[1].set_index('group')
     hour = tables[2].set_index('group')
     hour_dir = tables[3].set_index('group')
+    # Average the eight 3 h slots of every day, so the bars show the drift
+    # with lead time in day units instead of 80 crowded slots.
+    per_day = 8
+    days = int(np.ceil(lead.shape[0] / float(per_day)))
+    lead = lead.groupby(np.arange(lead.shape[0]) // per_day).mean()
+    lead_dir = lead_dir.groupby(
+        np.arange(lead_dir.shape[0]) // per_day
+    ).mean()
+    lead_x = np.arange(lead.shape[0], dtype=float)
+    day_ticks = lead_x
+    day_labels = ['{0}'.format(item + 1) for item in range(days)]
+    hour_x = hour.index.to_numpy(dtype=float)
+    keep = hour.notna().any(axis=1).to_numpy()
+    hour = hour[keep]
+    hour_dir = hour_dir[keep]
+    hour_x = hour_x[keep]
+    hour_ticks = hour_x
+    hour_labels = ['{0}'.format(int(item)) for item in hour_ticks]
     items = (
-        (lead, 'fig3e_lead_speed', '预报时效（h）', '风速 RMSE（m·s$^{-1}$）'),
-        (lead_dir, 'fig3f_lead_dir', '预报时效（h）', '风向 RMSE（°）'),
-        (hour, 'fig3g_hour_speed', '预报时间（UTC）', '风速 RMSE（m·s$^{-1}$）'),
-        (hour_dir, 'fig3h_hour_dir', '预报时间（UTC）', '风向 RMSE（°）'),
+        (lead, 'fig3e_lead_speed', '预报时效（d）',
+         '风速 RMSE（m·s$^{-1}$）', day_ticks, day_labels, 0.7, None),
+        (lead_dir, 'fig3f_lead_dir', '预报时效（d）', '风向 RMSE（°）',
+         day_ticks, day_labels, 0.7, None),
+        (hour, 'fig3g_hour_speed', '预报时刻（UTC）',
+         '风速 RMSE（m·s$^{-1}$）', hour_ticks, hour_labels,
+         2.0, (hour_x.min() - 1.4, hour_x.max() + 1.4)),
+        (hour_dir, 'fig3h_hour_dir', '预报时刻（UTC）', '风向 RMSE（°）',
+         hour_ticks, hour_labels, 2.0,
+         (hour_x.min() - 1.4, hour_x.max() + 1.4)),
     )
-    for table, name, xlabel, ylabel in items:
-        fig, axis = plt.subplots(figsize=(W_SINGLE, W_SINGLE * 0.78))
-        x_val = table.index.to_numpy(dtype=float)
-        _line_panel(axis, table, x_val, xlabel, ylabel)
-        fig.tight_layout()
+    for table, name, xlabel, ylabel, ticks, labels, span, limits in items:
+        fig, axis = plt.subplots(figsize=WIDE_SIZE)
+        if name.startswith('fig3e') or name.startswith('fig3f'):
+            x_val = lead_x
+        else:
+            x_val = hour_x
+        _bar_panel(
+            axis, table, x_val, xlabel, ylabel, ticks, labels,
+            group_width=span, span=limits,
+        )
+        fig.tight_layout(pad=0.1)
         save_fig(fig, fig_dir, name)
         plt.close(fig)
 
@@ -458,21 +520,22 @@ def _violin(
         inter = quar3 - quar1
         low = max(float(item.min()), quar1 - 1.5 * inter)
         high = min(float(item.max()), quar3 + 1.5 * inter)
-        axis.plot([pos, pos], [low, high], color='black', linewidth=1.6)
+        axis.plot([pos, pos], [low, high], color='black', linewidth=1.2)
         axis.add_patch(
             plt.Rectangle(
-                (pos - 0.06, quar1), 0.12, quar3 - quar1,
+                (pos - 0.04, quar1), 0.08, quar3 - quar1,
                 facecolor='black', edgecolor='black',
             )
         )
         axis.plot(
-            [pos - 0.06, pos + 0.06], [median, median],
-            color='white', linewidth=1.6,
+            [pos - 0.04, pos + 0.04], [median, median],
+            color='white', linewidth=1.2,
         )
     axis.set_xticks(positions, names)
     axis.set_xlim(0.4, len(names) + 0.6)
-    axis.set_xlabel('模型')
-    axis.set_ylabel(label)
+    axis.set_xlabel('模型', fontsize=FS_LABEL)
+    axis.set_ylabel(label, fontsize=FS_LABEL)
+    axis.tick_params(labelsize=FS_TICK)
 
 
 def plot_station(
@@ -495,9 +558,13 @@ def plot_station(
     n_station = ws.shape[0]
     if n_station < MIN_STATIONS and not allow_small:
         for ext in FIG_FORMATS:
-            stale = fig_dir / 'fig4_station_violin.{0}'.format(ext)
-            if stale.exists():
-                stale.unlink()
+            for stem in (
+                'fig4a_station_speed', 'fig4b_station_dir',
+                'fig4c_station_speed_improve', 'fig4d_station_dir_improve',
+            ):
+                stale = fig_dir / '{0}.{1}'.format(stem, ext)
+                if stale.exists():
+                    stale.unlink()
         print(
             '  skipped: only {0} stations, need >= {1} for a violin plot '
             '(stale figure removed; use --allow-small to force)'.format(
@@ -514,40 +581,32 @@ def plot_station(
         )
 
     names = [model for model in MODELS if model in ws.columns]
-    fig, axes = plt.subplots(2, 2, figsize=(W_DOUBLE, W_DOUBLE * 10.0 / 12.0))
-    _violin(
-        axes[0, 0], [ws[name].dropna().to_numpy() for name in names],
-        names, '风速 RMSE（m·s$^{-1}$）',
-    )
-    _violin(
-        axes[0, 1], [wd[name].dropna().to_numpy() for name in names],
-        names, '风向 RMSE（°）',
-    )
-
+    improved = [model for model in MODELS[1:] if model in ws.columns]
     base_ws = ws['ECMWF-IFS'].to_numpy(dtype=float)
     base_wd = wd['ECMWF-IFS'].to_numpy(dtype=float)
-    for axis, table, base, label in (
-        (axes[1, 0], ws, base_ws, '风速RMSE改善率（%）'),
-        (axes[1, 1], wd, base_wd, '风向RMSE改善率（%）'),
-    ):
-        improved = [
-            model for model in MODELS[1:] if model in table.columns
-        ]
-        data = [
-            ((base - table[model].to_numpy(dtype=float)) / base * 100.0)
-            for model in improved
-        ]
+    items = (
+        ([ws[name].dropna().to_numpy() for name in names], names,
+         '风速 RMSE（m·s$^{-1}$）', 'fig4a_station_speed'),
+        ([wd[name].dropna().to_numpy() for name in names], names,
+         '风向 RMSE（°）', 'fig4b_station_dir'),
+        ([(base_ws - ws[name].to_numpy(dtype=float)) / base_ws * 100.0
+          for name in improved], improved,
+         '风速 RMSE 改善率（%）', 'fig4c_station_speed_improve'),
+        ([(base_wd - wd[name].to_numpy(dtype=float)) / base_wd * 100.0
+          for name in improved], improved,
+         '风向 RMSE 改善率（%）', 'fig4d_station_dir_improve'),
+    )
+    for data, labels, ylabel, name in items:
         data = [item[~np.isnan(item)] for item in data]
-        _violin(axis, data, improved, label)
-
-    label_panels(axes, 'abcd')
-    fig.tight_layout()
-    save_fig(fig, fig_dir, 'fig4_station_violin', bbox_inches='tight')
-    plt.close(fig)
+        fig, axis = plt.subplots(figsize=SQUARE_SIZE)
+        _violin(axis, data, labels, ylabel)
+        fig.tight_layout(pad=0.1)
+        save_fig(fig, fig_dir, name)
+        plt.close(fig)
 
 
 def _radar(
-    axis: plt.Axes, table: pd.DataFrame, title: str,
+    axis: plt.Axes, table: pd.DataFrame,
     base: typing.Optional[np.ndarray] = None,
 ) -> None:
     """
@@ -581,12 +640,13 @@ def _radar(
     axis.set_theta_zero_location('N')
     axis.set_theta_direction(-1)
     axis.set_xticks(angle, SECTORS)
-    axis.set_rlabel_position(0)
-    axis.set_title(title, pad=20)
+    axis.tick_params(axis='x', labelsize=FS_LABEL)
+    for label in axis.get_yticklabels():
+        label.set_fontsize(FS_TICK)
+        label.set_bbox({'facecolor': 'white', 'edgecolor': 'none',
+                        'pad': 1.0})
+    axis.set_rlabel_position(22.5)
     axis.grid(alpha=0.6)
-    axis.legend(
-        loc='upper right', bbox_to_anchor=(1.32, 1.12), fontsize=7
-    )
 
 
 def plot_radar(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
@@ -606,18 +666,21 @@ def plot_radar(result_dir: pathlib.Path, fig_dir: pathlib.Path) -> None:
     base_speed = speed['ECMWF-IFS'].to_numpy(dtype=float)
     base_dir = direction['ECMWF-IFS'].to_numpy(dtype=float)
 
-    fig, axes = plt.subplots(
-        2, 2, figsize=(W_DOUBLE, W_DOUBLE * 12.0 / 13.0),
-        subplot_kw={'projection': 'polar'},
+    items = (
+        (speed, base_speed, 'fig5a_radar_speed'),
+        (direction, base_dir, 'fig5b_radar_dir'),
+        (speed, base_speed, 'fig5c_radar_speed_improve'),
+        (direction, base_dir, 'fig5d_radar_dir_improve'),
     )
-    _radar(axes[0, 0], speed, '风速 RMSE（m·s$^{-1}$）')
-    _radar(axes[0, 1], direction, '风向 RMSE（°）')
-    _radar(axes[1, 0], speed, '风速 RMSE 改善率（%）', base_speed)
-    _radar(axes[1, 1], direction, '风向 RMSE 改善率（%）', base_dir)
-    label_panels(axes, 'abcd')
-    fig.tight_layout()
-    save_fig(fig, fig_dir, 'fig5_radar', bbox_inches='tight')
-    plt.close(fig)
+    for table, base, name in items:
+        fig = plt.figure(figsize=RADAR_SIZE)
+        axis = fig.add_subplot(1, 1, 1, projection='polar')
+        if 'improve' not in name:
+            base = None
+        _radar(axis, table, base)
+        fig.tight_layout(pad=0.1)
+        save_fig(fig, fig_dir, name)
+        plt.close(fig)
 
 
 def main(allow_small: bool = False) -> None:
@@ -629,7 +692,7 @@ def main(allow_small: bool = False) -> None:
             MIN_STATIONS stations are available.
     """
     cfg = _CFG
-    result_dir = data_2411.result_root(cfg)
+    result_dir = workflow.result_root(cfg)
     table_dir = result_dir / 'tables'
     fig_dir = result_dir / 'figures'
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -663,7 +726,7 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace: Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description='Draw the figures of the 2411-station experiment'
+        description='Draw the figures of the station experiment'
     )
     parser.add_argument(
         '--allow-small', action='store_true',
@@ -674,7 +737,7 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == '__main__':
-    print('Program plot_2411.py started', flush=True)
+    print('Program plot.py started', flush=True)
     args = parse_args()
     main(allow_small=args.allow_small)
 

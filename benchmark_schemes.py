@@ -17,6 +17,8 @@ Modified in 2026-11-20
 import argparse
 import os
 import pathlib
+import shutil
+import tempfile
 import time
 import typing
 from concurrent.futures import ProcessPoolExecutor
@@ -25,9 +27,9 @@ import lightgbm as lgbm
 import numpy as np
 import pandas as pd
 
-from src import data_2411
-from train_2411 import fit_lgb, process_station, sc_to_ds
-from verify_2411 import ScoreAcc, write_text
+from src import workflow
+from train import fit_lgb, process_station, sc_to_ds
+from verify import ScoreAcc, write_text
 
 SCHEMES = ('unified', 'lead', 'station', 'station_lead')
 PROGRESS_EVERY = 100
@@ -58,7 +60,7 @@ class CacheSequence(lgbm.Sequence):
         self.rows = rows
         self.slots = list(slots)
         self.target = target
-        self.n_feature = len(data_2411.factor_columns(cfg)[0])
+        self.n_feature = len(workflow.factor_columns(cfg)[0])
         self.offsets = np.zeros(len(station_ids) + 1, dtype=np.int64)
         self._cache = {}
         self._order = []
@@ -84,7 +86,7 @@ class CacheSequence(lgbm.Sequence):
         cached = self._cache.get(index)
         if cached is not None:
             return cached
-        arr = data_2411.load_arrays(self.station_ids[index], self.cfg)
+        arr = workflow.load_arrays(self.station_ids[index], self.cfg)
         if arr is None:
             x_val = np.empty((0, self.n_feature), dtype=np.float32)
             target_val = np.empty(0, dtype=np.float32)
@@ -287,7 +289,7 @@ def score_frames(
     """
     acc = ScoreAcc(marker)
     for index, sta in enumerate(station_ids, 1):
-        arr = data_2411.load_arrays(sta, cfg)
+        arr = workflow.load_arrays(sta, cfg)
         x_all = arr['x'][rows][:, slots]
         x_val = x_all.reshape(-1, x_all.shape[-1])
         pred = predict_sc(models, x_val, marker)
@@ -316,7 +318,7 @@ def fold_rows(
     Returns:
         typing.Tuple[np.ndarray, np.ndarray]: Training and test indices.
     """
-    slices = data_2411.year_slices(cfg)
+    slices = workflow.year_slices(cfg)
     if year not in slices:
         raise ValueError('Unknown year: {0}'.format(year))
     test = np.arange(slices[year][0], slices[year][1])
@@ -345,45 +347,129 @@ def run_unified(
         ScoreAcc: Accumulated scores of the fold.
     """
     train, test = fold_rows(cfg, year)
-    slots = list(range(len(data_2411.target_hours(cfg))))
+    slots = list(range(len(workflow.target_hours(cfg))))
     cfg_one = _with_jobs(cfg, n_jobs)
     models = fit_frames(station_ids, cfg_one, train, slots)
     return score_frames(models, station_ids, cfg_one, test, slots, marker)
+
+
+def load_eval_matrix(
+    station_ids: typing.Sequence[str], cfg: dict, rows: np.ndarray,
+    slots: typing.Sequence[int],
+) -> dict:
+    """
+    Load the held-out rows of one fold into one in-memory matrix.
+
+    The rows carry the features plus the observed direction and speed, so the
+    scoring step never has to read a station file again. Rows are ordered
+    station -> sample -> slot and the slot index is kept.
+
+    Args:
+        station_ids: Stations of the fold.
+        cfg: Configuration dictionary.
+        rows: Sample indices of the held-out year.
+        slots: Lead-time slots to keep.
+
+    Returns:
+        dict: 'x', 'dir', 'spd', 'slot' and per-station 'offsets'.
+    """
+    n_feature = len(workflow.factor_columns(cfg)[0])
+    n_slot = len(slots)
+    n_station = len(station_ids)
+    counts = np.zeros(n_station, dtype=np.int64)
+    for index, sta in enumerate(station_ids):
+        arr = workflow.load_arrays(sta, cfg)
+        if arr is None:
+            continue
+        x_all = arr['x'][rows][:, slots]
+        keep = ~np.isnan(x_all.reshape(-1, x_all.shape[-1])).any(axis=1)
+        counts[index] = int(keep.sum())
+    offsets = np.zeros(n_station + 1, dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    total = int(offsets[-1])
+    x_buf = np.empty((total, n_feature), dtype=np.float32)
+    dir_buf = np.empty(total, dtype=np.float32)
+    spd_buf = np.empty(total, dtype=np.float32)
+    slot_buf = np.empty(total, dtype=np.int16)
+    for index, sta in enumerate(station_ids):
+        arr = workflow.load_arrays(sta, cfg)
+        if arr is None:
+            continue
+        x_all = arr['x'][rows][:, slots]
+        dir_all = arr['dir'][rows][:, slots]
+        spd_all = arr['spd'][rows][:, slots]
+        x_flat = x_all.reshape(-1, x_all.shape[-1])
+        keep = ~np.isnan(x_flat).any(axis=1)
+        slot_full = np.tile(np.arange(n_slot, dtype=np.int16), len(rows))
+        block = slice(int(offsets[index]), int(offsets[index + 1]))
+        x_buf[block] = x_flat[keep]
+        dir_buf[block] = dir_all.reshape(-1)[keep]
+        spd_buf[block] = spd_all.reshape(-1)[keep]
+        slot_buf[block] = slot_full[keep]
+    return {
+        'x': x_buf, 'dir': dir_buf, 'spd': spd_buf,
+        'slot': slot_buf, 'offsets': offsets,
+    }
 
 
 def _lead_task(task: tuple) -> tuple:
     """
     Fit and score the lead-time models of one slot chunk.
 
+    Every slot is stored in its own pair of arrays by the parent process, so
+    a worker reads only the slots it owns instead of scanning the whole fold.
+    Rows are station-major inside one slot, which is also the order the model
+    is trained on.
+
     Args:
-        task: (stations, cfg, year, slots, marker, n_jobs).
+        task: (stations, cfg, year, slots, marker, n_jobs, cache_dir).
 
     Returns:
         tuple: Overall accumulator and {slot: accumulator}.
     """
-    station_ids, cfg, year, slots, marker, n_jobs = task
+    station_ids, cfg, year, slots, marker, n_jobs, cache_dir = task
     train, test = fold_rows(cfg, year)
     cfg_one = _with_jobs(cfg, n_jobs)
-    models = {
-        slot: fit_frames(station_ids, cfg_one, train, [slot])
-        for slot in slots
-    }
+    params = lgb_params(cfg_one)
     total = ScoreAcc(marker)
     per_slot = {}
-    for sta in station_ids:
-        arr = data_2411.load_arrays(sta, cfg)
-        for slot in slots:
-            x_val = arr['x'][test][:, slot]
-            pred = predict_sc(models[slot], x_val, marker)
-            args = (
-                arr['dir'][test][:, slot].reshape(-1),
-                arr['spd'][test][:, slot].reshape(-1),
-                pred[..., 0], pred[..., 1],
+    for slot in slots:
+        features = np.load(
+            str(cache_dir / 'train_x_{0}.npy'.format(slot)),
+            mmap_mode='r',
+        )
+        labels = np.load(
+            str(cache_dir / 'train_y_{0}.npy'.format(slot)),
+            mmap_mode='r',
+        )
+        if features.shape[0] < 100:
+            per_slot[slot] = ScoreAcc(marker)
+            continue
+        matrix = np.asarray(features, dtype=np.float32)
+        models = list()
+        for target in range(3):
+            dataset = lgbm.Dataset(
+                matrix, label=np.asarray(labels[:, target]), params=params,
+                free_raw_data=False,
             )
-            if slot not in per_slot:
-                per_slot[slot] = ScoreAcc(marker)
-            per_slot[slot].add(*args)
-            total.add(*args)
+            models.append(lgbm.train(params, dataset))
+        test_x = np.load(
+            str(cache_dir / 'test_x_{0}.npy'.format(slot)), mmap_mode='r'
+        )
+        test_dir = np.load(
+            str(cache_dir / 'test_dir_{0}.npy'.format(slot)), mmap_mode='r'
+        )
+        test_spd = np.load(
+            str(cache_dir / 'test_spd_{0}.npy'.format(slot)), mmap_mode='r'
+        )
+        pred = predict_sc(models, np.asarray(test_x), marker)
+        slot_acc = ScoreAcc(marker)
+        slot_acc.add(
+            np.asarray(test_dir), np.asarray(test_spd),
+            pred[..., 0], pred[..., 1],
+        )
+        total.merge(slot_acc)
+        per_slot[slot] = slot_acc
     return total, per_slot
 
 
@@ -402,7 +488,7 @@ def _station_task(task: tuple) -> ScoreAcc:
     cfg_one = _with_jobs(cfg, n_jobs)
     total = ScoreAcc(marker)
     for sta in station_ids:
-        arr = data_2411.load_arrays(sta, cfg)
+        arr = workflow.load_arrays(sta, cfg)
         result = process_station(
             arr, cfg_one, test[0], test[-1] + 1, train, ('LightGBM-A',)
         )
@@ -429,11 +515,11 @@ def _station_lead_task(task: tuple) -> tuple:
     station_ids, cfg, year, marker = task
     train, test = fold_rows(cfg, year)
     cfg_one = _with_jobs(cfg, 1)
-    n_slot = len(data_2411.target_hours(cfg))
+    n_slot = len(workflow.target_hours(cfg))
     total = ScoreAcc(marker)
     slot_acc = [ScoreAcc(marker) for _ in range(n_slot)]
     for sta in station_ids:
-        arr = data_2411.load_arrays(sta, cfg)
+        arr = workflow.load_arrays(sta, cfg)
         for slot in range(n_slot):
             x_tr = arr['x'][train][:, slot]
             y_tr = arr['y'][train][:, slot]
@@ -539,7 +625,7 @@ def _score_slots(
     acc = ScoreAcc(marker)
     per_slot = {slot: ScoreAcc(marker) for slot in slots}
     for sta in station_ids:
-        arr = data_2411.load_arrays(sta, cfg)
+        arr = workflow.load_arrays(sta, cfg)
         for slot in slots:
             x_val = arr['x'][rows][:, slot]
             pred = predict_sc(models[slot], x_val, marker)
@@ -572,12 +658,12 @@ def load_matrix(
     Returns:
         dict: 'x', 'y', 'uv', 'slot' and the per-station 'offsets'.
     """
-    n_feature = len(data_2411.factor_columns(cfg)[0])
+    n_feature = len(workflow.factor_columns(cfg)[0])
     n_slot = len(slots)
     n_station = len(station_ids)
     counts = np.zeros(n_station, dtype=np.int64)
     for index, sta in enumerate(station_ids):
-        arr = data_2411.load_arrays(sta, cfg)
+        arr = workflow.load_arrays(sta, cfg)
         if arr is None:
             continue
         x_all = arr['x'][rows][:, slots]
@@ -603,7 +689,7 @@ def load_matrix(
     uv_buf = np.empty((total, 2), dtype=np.float32)
     slot_buf = np.empty(total, dtype=np.int16)
     for index, sta in enumerate(station_ids):
-        arr = data_2411.load_arrays(sta, cfg)
+        arr = workflow.load_arrays(sta, cfg)
         if arr is None:
             continue
         x_all = arr['x'][rows][:, slots]
@@ -646,7 +732,7 @@ def run_unified_matrix(
         ScoreAcc: Accumulated scores of the fold.
     """
     train, test = fold_rows(cfg, year)
-    slots = list(range(len(data_2411.target_hours(cfg))))
+    slots = list(range(len(workflow.target_hours(cfg))))
     matrix = load_matrix(station_ids, cfg, train, slots)
     cfg_one = _with_jobs(cfg, n_total)
     params = lgb_params(cfg_one)
@@ -679,7 +765,7 @@ def run_lead_matrix(
         typing.Tuple[ScoreAcc, list]: Overall and per-slot accumulators.
     """
     train, test = fold_rows(cfg, year)
-    n_slot = len(data_2411.target_hours(cfg))
+    n_slot = len(workflow.target_hours(cfg))
     slots = list(range(n_slot))
     matrix = load_matrix(station_ids, cfg, train, slots)
     cfg_one = _with_jobs(cfg, n_total)
@@ -724,15 +810,38 @@ def run_lead_parallel(
     Returns:
         typing.Tuple[ScoreAcc, list]: Overall and per-slot accumulators.
     """
-    outer = 2
-    inner = max(2, n_total // outer)
-    n_slot = len(data_2411.target_hours(cfg))
-    chunks = _split(list(range(n_slot)), outer)
-    tasks = [
-        (station_ids, cfg, year, chunk, marker, inner) for chunk in chunks
-    ]
-    with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
-        results = list(pool.map(_lead_task, tasks))
+    n_slot = len(workflow.target_hours(cfg))
+    outer = max(1, min(n_total, n_slot))
+    inner = max(1, n_total // outer)
+    train, test = fold_rows(cfg, year)
+    slots = list(range(n_slot))
+    chunks = _split(slots, outer)
+    with tempfile.TemporaryDirectory() as temp:
+        cache = pathlib.Path(temp)
+        # One pass over the stations, then split by lead time so that every
+        # worker reads only its own slots.
+        train_matrix = load_matrix(station_ids, cfg, train, slots)
+        test_matrix = load_eval_matrix(station_ids, cfg, test, slots)
+        for slot in slots:
+            keep = train_matrix['slot'] == slot
+            np.save(cache / 'train_x_{0}.npy'.format(slot),
+                    train_matrix['x'][keep])
+            np.save(cache / 'train_y_{0}.npy'.format(slot),
+                    train_matrix['y'][keep])
+            keep = test_matrix['slot'] == slot
+            np.save(cache / 'test_x_{0}.npy'.format(slot),
+                    test_matrix['x'][keep])
+            np.save(cache / 'test_dir_{0}.npy'.format(slot),
+                    test_matrix['dir'][keep])
+            np.save(cache / 'test_spd_{0}.npy'.format(slot),
+                    test_matrix['spd'][keep])
+        del train_matrix, test_matrix
+        tasks = [
+            (station_ids, cfg, year, chunk, marker, inner, cache)
+            for chunk in chunks
+        ]
+        with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
+            results = list(pool.map(_lead_task, tasks))
     total = ScoreAcc(marker)
     per_slot = [None] * n_slot
     for acc, slot_results in results:
@@ -771,7 +880,7 @@ def run_station_parallel(
     return total
 
 
-def run_station_lead_parallel(
+def run_site_lead(
     station_ids: typing.Sequence[str], cfg: dict, year: int, marker: float,
     n_total: int,
 ) -> typing.Tuple[ScoreAcc, list]:
@@ -790,7 +899,7 @@ def run_station_lead_parallel(
     """
     chunks = _split(station_ids, n_total)
     tasks = [(chunk, cfg, year, marker) for chunk in chunks]
-    n_slot = len(data_2411.target_hours(cfg))
+    n_slot = len(workflow.target_hours(cfg))
     with ProcessPoolExecutor(max_workers=len(chunks)) as pool:
         results = list(pool.map(_station_lead_task, tasks))
     total = ScoreAcc(marker)
@@ -809,17 +918,24 @@ def main(
     subset: int = 0,
     cores: int = 0,
     no_stream: bool = False,
+    seed: int = 42,
 ) -> None:
     """
     Run the selected schemes and write tables 6 and 7.
 
+    Stations are sampled at random rather than taken from the head of the
+    station list, because consecutive station identifiers cluster in space and
+    a head slice would bias every score. The seed is fixed so that a smaller
+    run can be reproduced exactly.
+
     Args:
         schemes: Scheme names to run.
-        limit: Number of stations to use (0 means all).
+        limit: Number of randomly sampled stations (0 means all).
         years: Held-out years to run (None means all folds).
-        subset: Shared station count when scheme 4 is selected (0 means all).
+        subset: Shared random station count for scheme 4 (0 means all).
         cores: Override of the thread budget (0 uses the configuration).
         no_stream: Preload the matrix instead of streaming.
+        seed: Random seed used for the station sampling.
     """
     unknown = [name for name in schemes if name not in SCHEMES]
     if unknown:
@@ -830,7 +946,7 @@ def main(
             flush=True,
         )
         return
-    cfg = data_2411.load_config()
+    cfg = workflow.load_config()
     n_total = parallel_budget(cfg)
     if cores:
         n_total = int(cores)
@@ -840,14 +956,20 @@ def main(
         ),
         flush=True,
     )
-    station_ids = data_2411.station_ids(cfg)
-    if limit:
-        station_ids = station_ids[:limit]
+    station_ids = workflow.station_ids(cfg)
+    rng = np.random.default_rng(seed)
+    if limit and limit < len(station_ids):
+        picked = sorted(rng.choice(len(station_ids), limit, replace=False))
+        station_ids = [station_ids[index] for index in picked]
     if 'station_lead' in schemes and subset:
-        station_ids = station_ids[:subset]
-    slices = data_2411.year_slices(cfg)
+        if subset < len(station_ids):
+            picked = sorted(
+                rng.choice(len(station_ids), subset, replace=False)
+            )
+            station_ids = [station_ids[index] for index in picked]
+    slices = workflow.year_slices(cfg)
     year_list = list(years) if years else sorted(slices)
-    n_slot = len(data_2411.target_hours(cfg))
+    n_slot = len(workflow.target_hours(cfg))
     n_train = int(cfg['constants']['n_samples']) - max(
         end - start for start, end in slices.values()
     )
@@ -863,7 +985,7 @@ def main(
         flush=True,
     )
     marker = float(cfg['obs']['calm_marker'])
-    result_dir = data_2411.result_root(cfg)
+    result_dir = workflow.result_root(cfg)
     table_dir = result_dir / 'tables'
     table_dir.mkdir(parents=True, exist_ok=True)
 
@@ -892,20 +1014,15 @@ def main(
                         station_ids, cfg, year, marker, n_total
                     )
             elif scheme == 'lead':
-                if stream:
-                    acc, per_slot = run_lead_parallel(
-                        station_ids, cfg, year, marker, n_total
-                    )
-                else:
-                    acc, per_slot = run_lead_matrix(
-                        station_ids, cfg, year, marker, n_total
-                    )
+                acc, per_slot = run_lead_parallel(
+                    station_ids, cfg, year, marker, n_total
+                )
             elif scheme == 'station':
                 acc = run_station_parallel(
                     station_ids, cfg, year, marker, n_total
                 )
             else:
-                acc, per_slot = run_station_lead_parallel(
+                acc, per_slot = run_site_lead(
                     station_ids, cfg, year, marker, n_total
                 )
             total_acc[scheme].merge(acc)
@@ -983,14 +1100,18 @@ def main(
             pooled_lead, table_dir, 'table7_overall',
             'Table 7 pooled scores by lead index', index=False,
         )
+    n_slot = len(workflow.target_hours(cfg))
+    lead_outer = max(1, min(n_total, n_slot))
     meta = (
         'cores={0}  n_total={1}\n'.format(os.cpu_count(), n_total)
         + 'unified: inner={0} outer=1\n'.format(n_total)
-        + 'lead: inner={0} outer=2\n'.format(max(2, n_total // 2))
+        + 'lead: inner={0} outer={1}\n'.format(
+            max(1, n_total // lead_outer), lead_outer)
         + 'station: inner={0} outer=4\n'.format(max(2, n_total // 4))
         + 'station_lead: inner=1 outer={0}\n'.format(n_total)
-        + 'stations={0}  years={1}\n'.format(
-            len(station_ids), ','.join(str(item) for item in year_list)
+        + 'stations={0}  years={1}  seed={2}  random={3}\n'.format(
+            len(station_ids), ','.join(str(item) for item in year_list),
+            seed, bool(limit)
         )
         + 'stream={0}  need={1:.1f}GB  available={2:.1f}GB\n'.format(
             stream, need_gb, avail_gb
@@ -1011,7 +1132,11 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--limit', type=int, default=0,
-        help='number of leading stations (0 means all, the default)',
+        help='number of randomly sampled stations (0 means all, the default)',
+    )
+    parser.add_argument(
+        '--seed', type=int, default=42,
+        help='random seed for the station sampling (default: 42)',
     )
     parser.add_argument(
         '--years', type=str, default='',
@@ -1019,7 +1144,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--subset', type=int, default=0,
-        help='shared station count, only used with station_lead '
+        help='shared random station count, only used with station_lead '
              '(0 means all, the default)',
     )
     parser.add_argument(
@@ -1040,5 +1165,6 @@ if __name__ == '__main__':
         subset=args.subset,
         cores=args.cores,
         no_stream=args.no_stream,
+        seed=args.seed,
     )
 

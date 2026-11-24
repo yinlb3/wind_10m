@@ -1,4 +1,12 @@
-"""Failure-injection tests for the resumable CMADaaS downloader."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Failure-injection tests for the resumable CMADaaS downloader.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 import contextlib
 import io
@@ -63,7 +71,7 @@ class DownloadTest(unittest.TestCase):
         return incomplete, output.getvalue()
 
     def test_empty_response_resume_preserves_and_deduplicates(self) -> None:
-        """An empty slice stays unresolved and later resumes without repeats."""
+        """An empty slice stays unresolved and resumes without repeats."""
         first_calls = []
 
         def first_fetch(time_range, sta_ids, **kwargs):

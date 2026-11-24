@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Train the 2411-station correction models with the per-station scheme.
+Train the station correction models with the per-station scheme.
 
 For every leave-one-year-out fold and every station, fit five models:
 the raw ECMWF-IFS wind (no training), a quantile-mapping PDFM baseline,
@@ -15,16 +15,22 @@ Modified in 2026-11-19
 """
 
 import argparse
+import csv
+import os
+import pathlib
 import time
 import typing
+from concurrent.futures import ProcessPoolExecutor
 
 import lightgbm as lgbm
 import numpy as np
 from sklearn import linear_model as lm
 
-from src import data_2411
+from src import workflow
 
 MODELS = ('ECMWF-IFS', 'PDFM', 'MLR', 'LightGBM-A', 'LightGBM-B')
+# Threads per worker; measured throughput peaks near seven on this machine.
+WORKER_THREADS = 7
 PDFM_QUANTILES = np.linspace(0.0, 1.0, 101)
 CALM_SPEED = 0.3
 
@@ -171,6 +177,7 @@ def process_station(
     year_end: int,
     train_index: np.ndarray,
     selected: typing.Sequence[str],
+    timing: typing.Optional[dict] = None,
 ) -> typing.Dict[str, np.ndarray]:
     """
     Fit and predict all selected models for one station and one fold.
@@ -182,12 +189,18 @@ def process_station(
         year_end: End sample index of the held-out year, exclusive.
         train_index: Sample indices of the training years.
         selected: Model names to run.
+        timing: Optional accumulator for per-model wall-clock seconds.
 
     Returns:
         typing.Dict[str, np.ndarray]: Predictions as (direction, speed)
         arrays with shape (n_samples, n_hours, 2).
     """
     marker = float(cfg['obs']['calm_marker'])
+
+    def _tick(name: str, mark: float) -> None:
+        """Accumulate the elapsed seconds of one model when requested."""
+        if timing is not None:
+            timing[name] = timing.get(name, 0.0) + time.perf_counter() - mark
     x_all = arr['x']
     y_all = arr['y']
     uv_all = arr['uv']
@@ -204,8 +217,10 @@ def process_station(
     te_mask = ~np.isnan(te_x).any(axis=2)
     ec_mask = (~np.isnan(te_x[..., 3])) & (~np.isnan(te_x[..., 4]))
 
+    mark = time.perf_counter()
     if 'ECMWF-IFS' in selected and ec_mask.any():
         result['ECMWF-IFS'][ec_mask] = uv_to_ds(te_x[ec_mask][:, 3:5], marker)
+    _tick('ECMWF-IFS', mark)
 
     # Each (sample, lead time) pair is one training row, so a missing slot
     # no longer discards the whole sample.
@@ -224,31 +239,125 @@ def process_station(
     fx_uv = fx_flat[keep_uv]
     fx_te = te_x[te_mask]
 
+    mark = time.perf_counter()
     if 'PDFM' in selected:
         pred_uv = np.full((fx_te.shape[0], 2), np.nan, np.float32)
         for k in range(2):
             obs_q, fcst_q = quantile_map(uv_tr[:, k], fx_tr[:, 3 + k])
             pred_uv[:, k] = np.interp(fx_te[:, 3 + k], fcst_q, obs_q)
         result['PDFM'][te_mask] = uv_to_ds(pred_uv, marker)
+    _tick('PDFM', mark)
 
+    mark = time.perf_counter()
     if 'MLR' in selected:
         mlr_models = fit_mlr(fx_tr, sc_tr)
         result['MLR'][te_mask] = sc_to_ds(
             predict_multi(mlr_models, fx_te), marker
         )
+    _tick('MLR', mark)
 
+    mark = time.perf_counter()
     if 'LightGBM-A' in selected:
         sc_models = fit_lgb(fx_tr, sc_tr, cfg)
         result['LightGBM-A'][te_mask] = sc_to_ds(
             predict_multi(sc_models, fx_te), marker
         )
+    _tick('LightGBM-A', mark)
 
+    mark = time.perf_counter()
     if 'LightGBM-B' in selected:
         uv_models = fit_lgb(fx_uv, uv_tr, cfg)
         result['LightGBM-B'][te_mask] = uv_to_ds(
             predict_multi(uv_models, fx_te), marker
         )
+    _tick('LightGBM-B', mark)
     return result
+
+
+def _with_jobs(cfg: dict, n_jobs: int) -> dict:
+    """
+    Return a copy of the configuration with a fixed LightGBM thread count.
+
+    Args:
+        cfg: Configuration dictionary.
+        n_jobs: Threads used inside one worker.
+
+    Returns:
+        dict: Copied configuration.
+    """
+    cfg_one = dict(cfg)
+    cfg_one['model'] = dict(cfg['model'])
+    cfg_one['model']['lgb_n_jobs'] = int(n_jobs)
+    return cfg_one
+
+
+def _merge_timing(total: dict, part: dict) -> None:
+    """
+    Add one worker's per-model seconds into the fold total.
+
+    Args:
+        total: Accumulated values, modified in place.
+        part: Values returned by one worker.
+    """
+    for key, value in part.items():
+        total[key] = total.get(key, 0) + value
+
+
+def _station_task(task: tuple) -> dict:
+    """
+    Process one station chunk and write predictions into shared memmaps.
+
+    Args:
+        task: (stations, cfg, start, end, train_index, selected,
+            pred_paths, block_start).
+
+    Returns:
+        dict: Seconds per model plus the processed station count.
+    """
+    (station_ids, cfg, start, end, train_index,
+     selected, pred_paths, block_start) = task
+    maps = {
+        name: np.load(pred_paths[name], mmap_mode='r+')
+        for name in selected
+    }
+    timing = {}
+    done = 0
+    for offset, sta in enumerate(station_ids):
+        arrays = workflow.load_arrays(sta, cfg)
+        if arrays is None:
+            continue
+        result = process_station(
+            arrays, cfg, start, end, train_index, selected, timing
+        )
+        for name in selected:
+            if name in result:
+                maps[name][:, :, block_start + offset, :] = result[name]
+        done += 1
+    for handle in maps.values():
+        handle.flush()
+    timing['stations'] = done
+    return timing
+
+
+def _write_timing(pred_dir: pathlib.Path, rows: list) -> None:
+    """
+    Write the per-model training cost table next to the predictions.
+
+    Args:
+        pred_dir: Prediction directory.
+        rows: Timing rows collected across folds.
+    """
+    if not rows:
+        return
+    log_dir = pred_dir.parent / 'logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / 'train_timing.csv'
+    fields = ['model', 'year', 'stations', 'seconds', 'sec_per_station']
+    with open(path, 'w', newline='', encoding='utf-8') as fp:
+        writer = csv.DictWriter(fp, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    print('Timing: {0}'.format(path), flush=True)
 
 
 def main(
@@ -256,6 +365,7 @@ def main(
     folds: int = 0,
     models: typing.Optional[typing.Sequence[str]] = None,
     years_wanted: typing.Optional[typing.Sequence[int]] = None,
+    cores: int = 0,
 ) -> None:
     """
     Train and predict all folds.
@@ -265,9 +375,10 @@ def main(
         folds: Number of folds to run (0 means all).
         models: Model names to run (None means all).
         years_wanted: Held-out years to run (None means all folds).
+        cores: Total thread budget (0 uses every logical CPU).
     """
-    cfg = data_2411.load_config()
-    station_ids = data_2411.station_ids(cfg)
+    cfg = workflow.load_config()
+    station_ids = workflow.station_ids(cfg)
     if limit:
         station_ids = station_ids[:limit]
     n_station = len(station_ids)
@@ -275,7 +386,7 @@ def main(
         print('No station found', flush=True)
         return
 
-    slices = data_2411.year_slices(cfg)
+    slices = workflow.year_slices(cfg)
     years = sorted(slices.keys())
     selected = tuple(models) if models else MODELS
     unknown = [name for name in selected if name not in MODELS]
@@ -287,7 +398,7 @@ def main(
             flush=True,
         )
         return
-    pred_dir = data_2411.pred_root(cfg)
+    pred_dir = workflow.pred_root(cfg)
     pred_dir.mkdir(parents=True, exist_ok=True)
 
     print(
@@ -297,7 +408,18 @@ def main(
         flush=True,
     )
 
-    n_hour = int(data_2411.target_hours(cfg).size)
+    n_hour = int(workflow.target_hours(cfg).size)
+    n_cpu = os.cpu_count() or 4
+    budget = cores if cores > 0 else n_cpu
+    n_worker = max(1, min(n_station, max(1, budget // WORKER_THREADS)))
+    cfg_worker = _with_jobs(cfg, max(2, budget // n_worker))
+    print(
+        'Workers: {0}  threads each: {1}'.format(
+            n_worker, cfg_worker['model']['lgb_n_jobs']
+        ),
+        flush=True,
+    )
+    timing_rows = list()
     for fold_index, year in enumerate(years):
         if folds and fold_index >= folds:
             break
@@ -308,43 +430,65 @@ def main(
             np.arange(*slices[other]) for other in years if other != year
         ])
         n_year = end - start
-        output = {
-            name: np.full((n_year, n_hour, n_station, 2), np.nan, np.float32)
-            for name in selected
-        }
-        fold_start = time.time()
-
-        for index, sta in enumerate(station_ids, 1):
-            arr = data_2411.load_arrays(sta, cfg)
-            if arr is None:
-                continue
-            result = process_station(
-                arr, cfg, start, end, train_index, selected
-            )
-            for name in selected:
-                if name in result:
-                    output[name][:, :, index - 1, :] = result[name]
-
-            if index % 20 == 0 or index == n_station:
-                elapsed = (time.time() - fold_start) / 60
-                rate = index / elapsed if elapsed > 0 else 0.0
-                remain = (n_station - index) / rate if rate > 0 else 0.0
-                print(
-                    '  fold {0} [{1}/{2}]  {3:.1f} min  eta {4:.1f} min'.format(
-                        year, index, n_station, elapsed, remain
-                    ),
-                    flush=True,
-                )
-
+        shape = (n_year, n_hour, n_station, 2)
+        pred_paths = dict()
         for name in selected:
             path = pred_dir / '{0}_{1}.npy'.format(FILE_NAMES[name], year)
-            np.save(path, output[name])
+            pred_paths[name] = str(path)
+            block = np.lib.format.open_memmap(
+                path, mode='w+', dtype=np.float32, shape=shape
+            )
+            block[:] = np.nan
+            block.flush()
+            del block
+        fold_start = time.time()
+
+        step = max(1, (n_station + n_worker - 1) // n_worker)
+        chunks = [
+            (station_ids[begin:begin + step], begin)
+            for begin in range(0, n_station, step)
+        ]
+        tasks = [
+            (chunk, cfg_worker, start, end, train_index, selected,
+             pred_paths, block_start)
+            for chunk, block_start in chunks
+        ]
+        timing = dict()
+        if n_worker <= 1:
+            for task in tasks:
+                _merge_timing(timing, _station_task(task))
+        else:
+            finished = 0
+            with ProcessPoolExecutor(max_workers=len(tasks)) as pool:
+                for part in pool.map(_station_task, tasks):
+                    _merge_timing(timing, part)
+                    finished += 1
+                    print(
+                        '  fold {0} chunk {1}/{2}'.format(
+                            year, finished, len(tasks)
+                        ),
+                        flush=True,
+                    )
+        elapsed = (time.time() - fold_start) / 60
+        done = int(timing.get('stations', 0))
+        for name in selected:
+            seconds = timing.get(name, 0.0)
+            timing_rows.append({
+                'model': name,
+                'year': year,
+                'stations': done,
+                'seconds': round(seconds, 2),
+                'sec_per_station': (
+                    round(seconds / done, 4) if done else 0.0
+                ),
+            })
         print(
-            'Fold {0} finished in {1:.1f} min'.format(
-                year, (time.time() - fold_start) / 60
+            'Fold {0} finished in {1:.1f} min ({2} stations)'.format(
+                year, elapsed, done
             ),
             flush=True,
         )
+    _write_timing(pred_dir, timing_rows)
 
 
 def parse_args() -> argparse.Namespace:
@@ -355,7 +499,7 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace: Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description='Train 2411-station correction models'
+        description='Train station correction models'
     )
     parser.add_argument('--limit', type=int, default=0)
     parser.add_argument('--folds', type=int, default=0)
@@ -364,11 +508,15 @@ def parse_args() -> argparse.Namespace:
         '--years', type=str, default='',
         help='Comma-separated held-out years (empty means every fold)'
     )
+    parser.add_argument(
+        '--cores', type=int, default=0,
+        help='Total thread budget (0 uses every logical CPU)'
+    )
     return parser.parse_args()
 
 
 if __name__ == '__main__':
-    print('Program train_2411.py started', flush=True)
+    print('Program train.py started', flush=True)
     args = parse_args()
     model_list = [
         item.strip() for item in args.models.split(',') if item.strip()
@@ -381,5 +529,6 @@ if __name__ == '__main__':
         folds=args.folds,
         models=model_list or None,
         years_wanted=year_list or None,
+        cores=args.cores,
     )
 

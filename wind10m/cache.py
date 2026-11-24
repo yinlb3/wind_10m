@@ -1,4 +1,12 @@
-"""Cache format constants and dataset-independent size estimates."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Cache format constants and dataset-independent size estimates.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 import numpy as np
 

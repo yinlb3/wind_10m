@@ -5,7 +5,7 @@ description: Configurable ECMWF 10 m wind forecast correction workflow.
 
 # Wind-10m Agent Guide
 
-> Maintain a reusable workflow. The 2411-station dataset is a validated
+> Maintain a reusable workflow. The station dataset is a validated
 > reference example, not the project's purpose or a station-count limit.
 
 ## 1. Scope and status
@@ -18,7 +18,7 @@ and MLR baselines.
 - Reference data: 2019–2024, 2233 usable stations, 2187 after QC.
 - Completed: six-fold predictions, common-sample tables 4/5, figures 1–5.
 - Pending: old-result comparison for deeper refactoring, full four-scheme
-  results, and full 10-day products.
+  results, and full deployment products.
 
 ## 2. Current structure
 
@@ -27,6 +27,7 @@ wind10m/
   cli.py                    Unified python -m wind10m dispatcher
   config.py                 Generic + dataset + local YAML loading
   cache.py                  Cache constants and pure size estimates
+  memory.py                 Available-RAM probe and station-block sizing
   dataset/
     base.py                 DatasetAdapter interface
     npy_csv.py              Current per-station NPY/CSV adapter
@@ -34,20 +35,24 @@ config/
   base.yaml                 Generic defaults; cache.mode defaults to none
   datasets/2411.yaml        Reference data dimensions and paths
   config.2411.local.yaml    Optional private reference paths; ignored
-src/data_2411.py            Reference numerical data implementation
+src/workflow.py             Reference numerical data implementation
 src/window.py               3–240 h interpolation and observation alignment
 cache_size.py               Compatible cache estimator entry point
-build_cache_2411.py         Optional per-station cache builder
-qc_stations_2411.py         Observation QC and required station list
-train_2411.py               Six-fold, five-model reference training
-verify_2411.py              Common-sample and grouped verification
-compute_mi_2411.py          Mutual-information matrix
-plot_2411.py                Result figures
+build_cache.py         Optional per-station cache builder
+qc_stations.py         Observation QC and required station list
+train.py               Six-fold, five-model reference training
+verify.py              Common-sample and grouped verification
+compute_mi.py          Mutual-information matrix
+plot.py                Result figures
 benchmark_schemes.py        Four-scheme comparison, tables 6/7
-predict_10day.py            10-day, 3-hourly wind product
+predict_product.py            deployment wind product
 download_obs.py             Optional standalone observation downloader
 tests/                      Synthetic configuration/CLI/adapter/cache tests
-docs/2411_cn.md             Reference data, results, extensions, refactor status
+docs/guide_cn.md             Reference data, results, extensions, refactor status
+LICENSE                     MIT license
+CITATION.cff                Citation metadata for the accompanying paper
+environment.yml             Conda environment; pins live in requirements.txt
+reproduce.sh                End-to-end qc, train, verify, mi and plot commands
 ```
 
 The generic shell delegates numerical operations to the reference code. Do not
@@ -83,11 +88,13 @@ intersection, filtered by the configured QC station list.
 
 ### Reference experiment
 
-Use `lead.mode: 24` for the validated 13–36 h experiment.
+The evaluation grid is declared by the dataset YAML (`lead.grid_start`,
+`lead.grid_end`, `lead.grid_step`); the reference dataset spans 3–240 h at 3 h
+steps. Changing the grid is a dataset change, not a run-time switch.
 
 ```bash
 python -m wind10m --config config/datasets/2411.yaml \
-  estimate-cache --stations 2233 --hours 24
+  estimate-cache --stations 2233
 python -m wind10m --config config/datasets/2411.yaml qc
 # Optional: set cache.mode to obs or full first
 python -m wind10m --config config/datasets/2411.yaml cache
@@ -111,19 +118,22 @@ compatible and use the same loader. Training and verification require
 Both persistent formats reconstruct `y/uv` and accept legacy full caches.
 `estimate-cache` supports station, sample, hour, and feature overrides.
 
-### Optional 240 h window and extensions
+### Extensions
 
-Set `lead.mode: 240` for the 80-slot grid; outputs use `pred_240/` and
-`results_240/`, separate from the main experiment.
+The four-scheme comparison and the deployment product use the same dataset grid and
+write into the configured prediction and result directories.
 
 ```bash
 python -m wind10m --config config/datasets/2411.yaml benchmark
-python -m wind10m --config config/datasets/2411.yaml predict-10day
+python -m wind10m --config config/datasets/2411.yaml product
 ```
 
-No limiting arguments means all configured stations and folds. Any `--limit`,
-`--subset`, or incomplete `--years` run is a smoke check. The 10-day product
-uses interpolation after 72 h and lacks independent later-lead verification.
+No limiting arguments means all configured stations and folds. `--limit` and
+`--subset` sample stations at random with a fixed seed (42; override with
+`--seed`), so a small run reproduces exactly and avoids the spatial bias of a
+head slice. Any `--limit`, `--subset`, or incomplete `--years` run is still a
+smoke check. The deployment product uses interpolation after 72 h and lacks
+independent later-lead verification.
 
 ## 5. Verification
 
@@ -161,7 +171,7 @@ confirmation.
   rows may be float64 only at the library interface.
 - Never hardcode private paths.
 - Update `Modified` dates in edited Python file headers.
-- Keep both READMEs, this guide, and `docs/2411_cn.md` synchronized.
+- Keep both READMEs, this guide, and `docs/guide_cn.md` synchronized.
 
 ## 7. Git and safety boundaries
 
@@ -186,6 +196,21 @@ confirmation.
 
 ## 8. Completed and pending work
 
+Completed on this computer on 2026-11-24:
+
+- Declared the evaluation grid in the dataset YAML instead of a run-time mode
+  switch; predictions and results no longer fork into per-mode directories.
+- Reworked verification to memory-map predictions and score adaptive station
+  blocks; the whole-fold arrays needed roughly 46 GB at 80 hours.
+- Stored a cache descriptor in every NPZ and refused incompatible caches with a
+  single rebuild notice.
+- Added `--years` to verification and fixed `--limit`, which previously could
+  not slice full-station prediction files.
+- Every output now targets the grid declared by the dataset; no per-mode
+  output directories remain.
+- Added the MIT license, citation metadata, pinned requirements, a conda
+  environment and an end-to-end `reproduce.sh`.
+
 Completed on this computer on 2026-11-23:
 
 - Added optional `none/obs/full` caches and lossless target reconstruction.
@@ -195,18 +220,21 @@ Completed on this computer on 2026-11-23:
   numerical algorithms.
 - Added resumable serial downloads with per-station completion, failure
   preservation, exact retry context, bounded logs, and empty-station CSVs.
-- Removed station-specific legacy training, evaluation, preprocessing, demo,
-  and configuration files from the supported codebase.
+- Removed the retired station-specific entry points, evaluation helpers and
+  legacy configuration files from the supported codebase.
 - Added nine synthetic regression tests and retained current entry-point
   compatibility.
-- Merged reference and extension documentation into `docs/2411_cn.md`.
+- Merged reference and extension documentation into `docs/guide_cn.md`.
 
 Pending:
 
+- `download_obs.py` imports `nmc_met_io` at module level, so importing it (or
+  the download tests) fails when `~/.nmcdev/config.ini` is missing; move the
+  import into the request path and document the credentials file.
 - Small real CMADaaS requests and targeted replay of the previous empty slice.
 - Before public release: complete old-result and one-fold validation, then audit Git history for private content.
 - Migration of training, schemes, and evaluation internals after equivalence.
 - Additional adapters for other raw layouts, including yearly arrays.
-- Full four-scheme and 10-day runs with independent later-lead verification.
+- Full four-scheme and deployment runs with independent later-lead verification.
 
-**Last Updated**: 2026-11-23
+**Last Updated**: 2026-11-24

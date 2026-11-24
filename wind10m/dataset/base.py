@@ -1,4 +1,12 @@
-"""Interface implemented by replaceable wind datasets."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Interface implemented by replaceable wind datasets.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 import abc
 import pathlib
@@ -18,7 +26,7 @@ class DatasetAdapter(abc.ABC):
         return int(self.cfg['constants']['n_samples'])
 
     @abc.abstractmethod
-    def available_station_ids(self) -> typing.List[str]:
+    def available_ids(self) -> typing.List[str]:
         """Return stations having both model factors and observations."""
 
     @abc.abstractmethod

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Build optional per-station caches for the 2411-station experiment.
+Build optional per-station caches for the station experiment.
 
 The configured cache mode selects observation-only or full feature storage.
 Files are uncompressed NPZ archives; encoded targets are reconstructed on
@@ -20,7 +20,7 @@ import typing
 
 import numpy as np
 
-from src import data_2411
+from src import workflow
 
 # Progress print interval in stations.
 PROGRESS_EVERY = 20
@@ -34,11 +34,15 @@ def parse_args() -> argparse.Namespace:
         argparse.Namespace: Parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description='Build per-station caches for the 2411 experiment'
+        description='Build per-station caches for the configured experiment'
     )
     parser.add_argument(
         '--limit', type=int, default=0,
-        help='Process only the first N stations (0 means all)'
+        help='number of randomly sampled stations (0 means all)'
+    )
+    parser.add_argument(
+        '--seed', type=int, default=42,
+        help='random seed for the station sampling (default: 42)'
     )
     parser.add_argument(
         '--force', action='store_true',
@@ -47,17 +51,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _cache_ready(path: pathlib.Path, mode: str, n_hour: int) -> bool:
-    """Return whether an existing cache satisfies the selected mode."""
+def _cache_ready(path: pathlib.Path, mode: str, cfg: dict) -> bool:
+    """Return whether an existing cache satisfies the active configuration."""
     if not path.exists():
         return False
+    n_hour = int(workflow.target_hours(cfg).size)
     with np.load(path) as data:
         if 'dir' not in data.files or 'spd' not in data.files:
             return False
         if data['dir'].shape[1] != n_hour:
             return False
         if mode == 'full':
-            return 'x' in data.files and data['x'].shape[1] == n_hour
+            if 'x' not in data.files or data['x'].shape[1] != n_hour:
+                return False
+        if 'meta' in data.files:
+            return str(data['meta']) == workflow.cache_descriptor(cfg)
     return True
 
 
@@ -91,19 +99,25 @@ def _summarize(arrays: dict, cfg: dict) -> dict:
     return item
 
 
-def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
+def main(
+    limit: int = 0, force: bool = False, seed: int = 42,
+) -> typing.List[dict]:
     """
     Build caches for every station with both factors and observations.
 
+    A limited run samples stations at random with a fixed seed, matching the
+    sampling of benchmark_schemes.py so that a small run reuses these caches.
+
     Args:
-        limit: Number of stations to process (0 means all).
+        limit: Number of randomly sampled stations (0 means all).
         force: Whether to rebuild existing caches.
+        seed: Random seed used for the station sampling.
 
     Returns:
         typing.List[dict]: Per-station quality report.
     """
-    cfg = data_2411.load_config()
-    mode = data_2411.cache_mode(cfg)
+    cfg = workflow.load_config()
+    mode = workflow.cache_mode(cfg)
     if mode == 'none':
         print(
             "Cache building is disabled. Set cache.mode to 'obs' or 'full' "
@@ -112,9 +126,11 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
         )
         return []
 
-    station_ids = data_2411.available_station_ids(cfg)
-    if limit:
-        station_ids = station_ids[:limit]
+    station_ids = workflow.available_ids(cfg)
+    if limit and limit < len(station_ids):
+        rng = np.random.default_rng(seed)
+        picked = sorted(rng.choice(len(station_ids), limit, replace=False))
+        station_ids = [station_ids[index] for index in picked]
     total = len(station_ids)
     if total == 0:
         print('No station found', flush=True)
@@ -128,21 +144,20 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
     report = list()
     skipped = 0
     start_all = time.time()
-    n_hour = int(data_2411.target_hours(cfg).size)
 
     for index, sta in enumerate(station_ids, 1):
-        path = data_2411.cache_path(sta, cfg)
-        if not force and _cache_ready(path, mode, n_hour):
+        path = workflow.cache_path(sta, cfg)
+        if not force and _cache_ready(path, mode, cfg):
             skipped += 1
             continue
         if mode == 'obs':
-            arrays = data_2411.build_observations(sta, cfg)
+            arrays = workflow.build_observations(sta, cfg)
         else:
-            arrays = data_2411.build_station(sta, cfg)
+            arrays = workflow.build_station(sta, cfg)
         if arrays is None:
             print(f'  {sta}: no observation, skipped', flush=True)
             continue
-        data_2411.save_cache(sta, cfg, arrays)
+        workflow.save_cache(sta, cfg, arrays)
         item = _summarize(arrays, cfg)
         item['sta'] = sta
         report.append(item)
@@ -176,6 +191,6 @@ def main(limit: int = 0, force: bool = False) -> typing.List[dict]:
 
 
 if __name__ == '__main__':
-    print('Program build_cache_2411.py started', flush=True)
+    print('Program build_cache.py started', flush=True)
     args = parse_args()
-    main(limit=args.limit, force=args.force)
+    main(limit=args.limit, force=args.force, seed=args.seed)

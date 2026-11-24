@@ -1,0 +1,8 @@
+name: wind10m
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11.11
+  - pip
+  - pip:
+      - -r requirements.txt

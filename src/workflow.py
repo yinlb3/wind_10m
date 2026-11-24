@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Data access layer for the 2411-station experiment.
+Data access layer for the station experiment.
 
 Reads the per-station NWP factor arrays (data{sta}.npy) and the per-station
 hourly observation CSVs (sta/{sta}.csv, plus sta/2024/{sta}.csv), cleans the
@@ -9,10 +9,11 @@ observations, interpolates the 3-hourly factors to hourly values inside the
 evaluation window and encodes wind direction as (speed, sin, cos).
 
 Founded in 2026-10-29
-Modified in 2026-11-23
+Modified in 2026-11-24
 @author: yinlb
 """
 
+import json
 import pathlib
 import typing
 
@@ -43,6 +44,9 @@ STA_COLS = [
     'Station_Id_C', 'Datetime', 'PRE_1h',
     'WIN_D_Avg_10mi', 'WIN_S_Avg_10mi',
 ]
+
+# Cache descriptors already reported, so a rebuild is announced only once.
+_CACHE_WARNED = set()
 
 
 def load_config() -> dict:
@@ -92,10 +96,10 @@ def lead_hours(cfg: dict) -> np.ndarray:
 
 def target_hours(cfg: dict) -> np.ndarray:
     """
-    Return the target hours inside the evaluation window.
+    Return the evaluation grid declared by the dataset configuration.
 
-    In mode 24 the window is 13-36 h at 1 h steps (24 values); in mode 240
-    it spans 3-240 h at 3 h steps (80 values).
+    The grid belongs to the dataset, so another dataset simply declares its
+    own ``lead.grid_start``, ``lead.grid_end`` and ``lead.grid_step``.
 
     Args:
         cfg: Configuration dictionary.
@@ -104,10 +108,6 @@ def target_hours(cfg: dict) -> np.ndarray:
         np.ndarray: Target hours.
     """
     lead = cfg['lead']
-    if int(lead['mode']) == 24:
-        begin = lead['begin_hour']
-        end = lead['end_hour']
-        return np.arange(begin + 1, end + 1, dtype=np.float64)
     start = lead['grid_start']
     end = lead['grid_end']
     step = lead['grid_step']
@@ -116,11 +116,11 @@ def target_hours(cfg: dict) -> np.ndarray:
 
 def grid_weights(cfg: dict) -> np.ndarray:
     """
-    Build the interpolation weights for the active target grid.
+    Build the interpolation weights for the dataset evaluation grid.
 
-    The target hours come from ``target_hours``: 24 hourly hours in mode 24
-    and 80 three-hourly hours in mode 240. Weights are computed against the
-    full 52-slot source so that both modes share one implementation.
+    The target hours come from ``target_hours``; weights are computed against
+    the full source slot grid so that any declared evaluation grid shares one
+    implementation.
 
     Args:
         cfg: Configuration dictionary.
@@ -159,7 +159,7 @@ def time_steps(cfg: dict) -> np.ndarray:
     return np.concatenate([step_a, step_b])
 
 
-def available_station_ids(cfg: dict) -> typing.List[str]:
+def available_ids(cfg: dict) -> typing.List[str]:
     """
     Return the station IDs that have both factor data and observations.
 
@@ -193,13 +193,13 @@ def station_ids(cfg: dict) -> typing.List[str]:
     Raises:
         FileNotFoundError: If the configured QC station list is missing.
     """
-    station_all = available_station_ids(cfg)
+    station_all = available_ids(cfg)
     list_path = cfg['paths'].get('station_list')
     if list_path:
         path = pathlib.Path(list_path)
         if not path.exists():
             raise FileNotFoundError(
-                'QC station list not found: {0}. Run qc_stations_2411.py '
+                'QC station list not found: {0}. Run qc_stations.py '
                 'first or unset paths.station_list intentionally.'.format(path)
             )
         with open(path, 'r', encoding='utf-8') as file_handle:
@@ -278,7 +278,7 @@ def load_factors(sta: str, cfg: dict) -> np.ndarray:
     return np.einsum('nlf,hl->nhf', block, weights).astype(np.float32)
 
 
-def _read_obs_frame(sta: str, cfg: dict):
+def _read_obs_frame(sta: str, cfg: dict) -> pd.DataFrame:
     """
     Read and de-duplicate the hourly observation CSV of one station.
 
@@ -586,25 +586,9 @@ def cache_path(sta: str, cfg: dict) -> pathlib.Path:
     return pathlib.Path(cfg['paths']['cache_dir']) / 'cache{0}.npz'.format(sta)
 
 
-def mode_suffix(cfg: dict) -> str:
-    """
-    Return the output-name suffix of the active lead-time mode.
-
-    Args:
-        cfg: Configuration dictionary.
-
-    Returns:
-        str: '' for mode 24 and '_240' for mode 240.
-    """
-    return '' if int(cfg['lead']['mode']) == 24 else '_240'
-
-
 def pred_root(cfg: dict) -> pathlib.Path:
     """
-    Return the prediction directory of the active mode.
-
-    Mode 240 writes to a sibling directory, so the main-experiment predictions
-    are never overwritten.
+    Return the prediction directory.
 
     Args:
         cfg: Configuration dictionary.
@@ -612,14 +596,12 @@ def pred_root(cfg: dict) -> pathlib.Path:
     Returns:
         pathlib.Path: Prediction directory.
     """
-    base = pathlib.Path(cfg['paths']['pred_dir'])
-    suffix = mode_suffix(cfg)
-    return base if not suffix else base.parent / (base.name + suffix)
+    return pathlib.Path(cfg['paths']['pred_dir'])
 
 
 def result_root(cfg: dict) -> pathlib.Path:
     """
-    Return the result directory of the active mode.
+    Return the result directory.
 
     Args:
         cfg: Configuration dictionary.
@@ -627,9 +609,36 @@ def result_root(cfg: dict) -> pathlib.Path:
     Returns:
         pathlib.Path: Result directory.
     """
-    base = pathlib.Path(cfg['paths']['result_dir'])
-    suffix = mode_suffix(cfg)
-    return base if not suffix else base.parent / (base.name + suffix)
+    return pathlib.Path(cfg['paths']['result_dir'])
+
+
+def cache_descriptor(cfg: dict) -> str:
+    """
+    Return the JSON descriptor stored with every cache file.
+
+    The descriptor records the cache mode, evaluation hours, feature count and
+    grid, so a cache built for another configuration is never reused silently.
+
+    Args:
+        cfg: Configuration dictionary.
+
+    Returns:
+        str: Stable JSON descriptor.
+    """
+    lead = cfg['lead']
+    return json.dumps(
+        {
+            'mode': cache_mode(cfg),
+            'n_hour': int(target_hours(cfg).size),
+            'n_feature': len(factor_columns(cfg)[0]),
+            'grid': [
+                float(lead['grid_start']),
+                float(lead['grid_end']),
+                float(lead['grid_step']),
+            ],
+        },
+        sort_keys=True,
+    )
 
 
 def _restore_arrays(
@@ -640,6 +649,8 @@ def _restore_arrays(
         return None
     n_hour = int(target_hours(cfg).size)
     if stored['dir'].shape[1] != n_hour:
+        return None
+    if 'meta' in stored and str(stored['meta']) != cache_descriptor(cfg):
         return None
 
     arrays = {
@@ -660,6 +671,23 @@ def _restore_arrays(
     else:
         arrays['uv'] = encode_uv(arrays['dir'], arrays['spd'], cfg)
     return arrays
+
+
+def _warn_cache(
+    path: pathlib.Path, stored: dict, cfg: dict
+) -> None:
+    """Report an existing cache that cannot serve the active configuration."""
+    hours = int(target_hours(cfg).size)
+    if hours in _CACHE_WARNED:
+        return
+    _CACHE_WARNED.add(hours)
+    found = stored['dir'].shape[1] if 'dir' in stored else None
+    print(
+        'Cache not reusable ({0} holds {1} hours, {2} required); rebuilding '
+        'in memory. Set cache.mode and run build_cache.py to refresh '
+        '{3}'.format(path.name, found, hours, path.parent),
+        flush=True,
+    )
 
 
 def load_arrays(sta: str, cfg: dict) -> typing.Optional[dict]:
@@ -685,6 +713,7 @@ def load_arrays(sta: str, cfg: dict) -> typing.Optional[dict]:
         arrays = _restore_arrays(sta, stored, cfg)
         if arrays is not None:
             return arrays
+        _warn_cache(path, stored, cfg)
     return build_station(sta, cfg)
 
 
@@ -718,9 +747,11 @@ def save_cache(sta: str, cfg: dict, arrays: dict) -> pathlib.Path:
         raise ValueError('Missing cache arrays: {0}'.format(missing))
     path = cache_path(sta, cfg)
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {key: arrays[key] for key in keys}
+    payload['meta'] = np.array(cache_descriptor(cfg))
     # Uncompressed npz: float32 factors compress poorly, and decompression
     # dominates training I/O when station files are read repeatedly.
-    np.savez(path, **{key: arrays[key] for key in keys})
+    np.savez(path, **payload)
     return path
 
 

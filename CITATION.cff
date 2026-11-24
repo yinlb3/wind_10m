@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the accompanying paper."
+title: wind_10m
+abstract: >-
+  Configurable ECMWF 10 m wind forecast correction workflow with station
+  quality control, feature alignment, LightGBM angle and vector models,
+  baseline schemes, verification tables and figures.
+type: software
+authors:
+  - family-names: Yin
+    given-names: L. B.
+    email: yinlb3@foxmail.com
+license: MIT
+version: 0.1.0
+date-released: 2026-11-24
+repository-code: https://github.com/yinlb3/wind_10m

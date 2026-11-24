@@ -15,7 +15,7 @@ import argparse
 import pathlib
 import typing
 
-from src import data_2411
+from src import workflow
 from wind10m.cache import estimate_sizes, format_size
 from wind10m.config import load_config
 from wind10m.dataset import create_adapter
@@ -73,7 +73,7 @@ def infer_station_count(cfg: dict) -> typing.Tuple[int, str]:
                 }
             if stations:
                 return len(stations), 'QC list: {0}'.format(path)
-    stations = create_adapter(cfg).available_station_ids()
+    stations = create_adapter(cfg).available_ids()
     if stations:
         return len(stations), 'Raw-data station intersection'
     raise ValueError('No stations found; provide --stations N')
@@ -107,7 +107,7 @@ def main() -> None:
         '{3} features'.format(stations, samples, hours, features)
     )
     print('Mode  Per station         Total')
-    for mode in data_2411.CACHE_MODES:
+    for mode in workflow.CACHE_MODES:
         total = sizes[mode]
         per_station = total // stations
         print(
@@ -115,7 +115,7 @@ def main() -> None:
                 mode, format_size(per_station), format_size(total)
             )
         )
-    print('Configured cache.mode: {0}'.format(data_2411.cache_mode(cfg)))
+    print('Configured cache.mode: {0}'.format(workflow.cache_mode(cfg)))
     print('obs: stores dir/spd/pre and rebuilds x/y/uv on demand')
     print('full: stores x/dir/spd/pre and rebuilds y/uv on demand')
     print('Estimates exclude small NPZ metadata overhead.')

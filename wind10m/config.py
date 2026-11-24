@@ -1,4 +1,12 @@
-"""Layered YAML configuration for replaceable datasets."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Layered YAML configuration for replaceable datasets.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 import os
 import pathlib

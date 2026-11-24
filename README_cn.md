@@ -43,7 +43,7 @@ Station_Id_C, Datetime, PRE_1h, WIN_D_Avg_10mi, WIN_S_Avg_10mi
 ```
 
 站号由文件名确定，NWP 和观测文件按站号匹配。参考数据集的 52 个原始时效、
-31 列因子布局及特殊缺测码见 `docs/2411_cn.md`。
+31 列因子布局及特殊缺测码见 `docs/guide_cn.md`。
 
 ### 本机配置
 
@@ -58,16 +58,14 @@ paths:
   result_dir: '/path/to/results'
   station_list: '/path/to/results/qc/stations_ok.txt'
 
-lead:
-  mode: 24
-
 cache:
   mode: none
 ```
 
-该文件已被 Git 忽略。`lead.mode: 24` 对应已验证的 13–36 h 主实验窗口；
-`cache.mode: none` 表示不建立持久缓存。通用默认参数位于
-`config/base.yaml`，参考数据集参数位于 `config/datasets/2411.yaml`。
+该文件已被 Git 忽略。评估时效网格由数据集 YAML 的 `lead.grid_start`、
+`lead.grid_end`、`lead.grid_step` 决定，不是运行开关；`cache.mode: none`
+表示不建立持久缓存。通用默认参数位于 `config/base.yaml`，参考数据集参数位于
+`config/datasets/2411.yaml`。
 
 ## 复现参考实验
 
@@ -75,17 +73,17 @@ cache:
 
 ```bash
 # 1. 观测清洗与站点质控，生成 stations_ok.txt
-python qc_stations_2411.py
+python qc_stations.py
 
 # 2. 六折留一年训练与预测
-python train_2411.py
+python train.py
 
 # 3. 共同样本检验及分组统计
-python verify_2411.py
+python verify.py
 
 # 4. 互信息矩阵与图件
-python compute_mi_2411.py
-python plot_2411.py
+python compute_mi.py
+python plot.py
 ```
 
 每折包含 ECMWF-IFS、PDFM、MLR、LightGBM-A（角度编码）和
@@ -101,12 +99,12 @@ LightGBM-B（矢量分解）五个模型。
 | 内容 | 目录 |
 |---|---|
 | QC 表格及站点清单 | `docs/results/qc/` |
-| 逐模型、逐年份预测 | `artifacts/2411/pred/` |
+| 逐模型、逐年份预测 | `<pred_dir>` |
 | 总体与分组检验表 | `docs/results/tables/` |
 | 图 1–5 | `docs/results/figures/` |
-| 可选逐站缓存 | `artifacts/2411/cache/` |
+| 可选逐站缓存 | `<cache_dir>` |
 
-参考实验的指标定义、共同样本口径和已核验数值见 `docs/2411_cn.md`。
+参考实验的指标定义、共同样本口径和已核验数值见 `docs/guide_cn.md`。
 
 ## 观测数据下载
 
@@ -127,7 +125,7 @@ python download_obs.py --station-info /path/to/stations.csv \
 下载器采用串行请求和半年切片。再次执行相同命令可从
 `.download_state.json` 恢复，不重复已完成的时间片。失败不会删除临时文件；
 只有显式指定 `--restart` 才重置未完成任务。整段无观测的站输出表头空 CSV。
-运行状态和日志说明见 `docs/2411_cn.md`。
+运行状态和日志说明见 `docs/guide_cn.md`。
 
 ## 缓存配置
 
@@ -149,7 +147,7 @@ python cache_size.py --stations 2233 --hours 24
 在本机 YAML 中选择 `obs` 或 `full` 后执行：
 
 ```bash
-python build_cache_2411.py
+python build_cache.py
 ```
 
 ## 使用其他数据集
@@ -171,11 +169,11 @@ python build_cache_2411.py
 python benchmark_schemes.py
 
 # 3–240 h、逐 3 h 风预报产品
-python predict_10day.py
+python predict_product.py
 ```
 
 扩展代码已通过小样本检查，但尚未形成全量正式结果。十天产品在 72 h 后
-使用线性插值；当前仅 13–36 h 经过主实验检验，更晚时效需要独立观测验证。
+使用线性插值；四方案与产品都还需要在 80 时次网格上全量运行。
 
 ## 测试
 
@@ -187,14 +185,30 @@ python -m unittest discover -s tests -v
 
 ## 文档
 
-- `docs/2411_cn.md`：参考数据、复现结果、缓存、下载和扩展参数。
+- `docs/guide_cn.md`：参考数据、复现结果、缓存、下载和扩展参数。
 - `AGENTS.md`：开发规范、验证要求和安全边界。
 
-## 许可证与联系方式
+## 端到端复现
 
-本项目为内部研究代码，未提供公共许可证。
+锁定版本见 `requirements.txt`，`environment.yml` 可创建配套的 conda 环境。
+
+```bash
+bash reproduce.sh                    # Linux 与 macOS
+```
+
+Windows 下用同一解释器逐条执行 `reproduce.sh` 中的 `python -m wind10m ...` 命令。
+
+## 引用与许可
+
+代码以 MIT 协议发布，见 `LICENSE`。
+
+配套论文：
+
+> 基于LightGBM和角度编码策略的风速风向短期预报方法
+
+图 1–5 由 `plot.py` 依据 `verify.py` 写出的检验表生成；引用信息见 `CITATION.cff`。
 
 - 作者：yinlb
 - 邮箱：yinlb3@foxmail.com
 
-最后更新：2026-11-23
+最后更新：2026-11-24

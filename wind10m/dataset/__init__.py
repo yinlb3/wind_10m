@@ -1,4 +1,12 @@
-"""Dataset adapter selection."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Dataset adapter selection.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 from wind10m.dataset.base import DatasetAdapter
 from wind10m.dataset.npy_csv import NpyCsvAdapter

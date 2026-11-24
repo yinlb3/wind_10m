@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Compute the mutual-information matrix of the 2411-station factors.
+Compute the mutual-information matrix of the station factors.
 
 Samples a subset of stations and forecast cycles, flattens the factors and
 estimates the 26 x 26 mutual-information matrix with a 2-D histogram.
@@ -17,7 +17,7 @@ import typing
 
 import numpy as np
 
-from src import data_2411
+from src import workflow
 
 # Histogram bins used for the mutual-information estimate.
 BINS = 32
@@ -58,13 +58,13 @@ def collect_samples(
         typing.Tuple[np.ndarray, typing.List[str]]: Flattened factor matrix
         with shape (n, n_factors) and the factor names.
     """
-    station_ids = data_2411.station_ids(cfg)
+    station_ids = workflow.station_ids(cfg)
     if n_station:
         station_ids = station_ids[::max(len(station_ids) // n_station, 1)]
-    _, names = data_2411.factor_columns(cfg)
+    _, names = workflow.factor_columns(cfg)
     chunks = list()
     for sta in station_ids:
-        arrays = data_2411.load_cache(sta, cfg)
+        arrays = workflow.load_arrays(sta, cfg)
         if arrays is None:
             continue
         factors = arrays['x']
@@ -82,7 +82,7 @@ def main(n_station: int = 200, n_sample: int = 100) -> None:
         n_station: Number of stations to sample (0 means all).
         n_sample: Number of forecast cycles to sample per station.
     """
-    cfg = data_2411.load_config()
+    cfg = workflow.load_config()
     data, names = collect_samples(cfg, n_station, n_sample)
     valid = ~np.isnan(data).any(axis=1)
     data = data[valid].astype(np.float64)
@@ -102,14 +102,14 @@ def main(n_station: int = 200, n_sample: int = 100) -> None:
     result_dir = pathlib.Path(cfg['paths']['result_dir'])
     table_dir = result_dir / 'tables'
     table_dir.mkdir(parents=True, exist_ok=True)
-    np.save(table_dir / 'mi_2411.npy', matrix)
-    with open(table_dir / 'mi_2411_names.txt', 'w', encoding='utf-8') as fp:
+    np.save(table_dir / 'mi.npy', matrix)
+    with open(table_dir / 'mi_names.txt', 'w', encoding='utf-8') as fp:
         fp.write('\n'.join(names))
-    print('Saved {0}'.format(table_dir / 'mi_2411.npy'), flush=True)
+    print('Saved {0}'.format(table_dir / 'mi.npy'), flush=True)
 
 
 if __name__ == '__main__':
-    print('Program compute_mi_2411.py started', flush=True)
+    print('Program compute_mi.py started', flush=True)
     parser = argparse.ArgumentParser()
     parser.add_argument('--stations', type=int, default=200)
     parser.add_argument('--samples', type=int, default=100)

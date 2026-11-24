@@ -3,7 +3,7 @@
 """
 Draw the spatial distribution of the retained and dropped stations.
 
-The station list comes from meteva's bundled 2411-station table, which holds
+The station list comes from meteva's bundled station table, which holds
 only positions, so every point is drawn without any value.
 
 Founded in 2026-11-21
@@ -19,7 +19,7 @@ import meteva.base as meb
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 
-from src import data_2411  # noqa: E402
+from src import workflow  # noqa: E402
 
 CM = 1.0 / 2.54
 
@@ -40,13 +40,13 @@ def _read_ids(path: pathlib.Path) -> set:
 
 def main() -> None:
     """Draw and save the station map."""
-    cfg = data_2411.load_config()
+    cfg = workflow.load_config()
     dpi = int(cfg['figure']['dpi'])
     formats = [
         str(item).lstrip('.').lower() for item in cfg['figure']['formats']
     ]
     result_dir = pathlib.Path(cfg['paths']['result_dir'])
-    fig_dir = data_2411.result_root(cfg) / 'figures'
+    fig_dir = workflow.result_root(cfg) / 'figures'
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     plt.rcParams['font.sans-serif'] = [

@@ -91,3 +91,6 @@ tmp/
 
 # Session notes (local only)
 CONTEXT.md
+
+# Local manuscript directory (never in git)
+paper/

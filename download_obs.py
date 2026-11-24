@@ -86,7 +86,9 @@ class FetchResult(typing.NamedTuple):
     message: str
 
 
-def _progress(total: int, description: str):
+def _progress(
+    total: int, description: str,
+) -> typing.Optional[typing.Any]:
     """Create a progress bar based on completed theoretical station hours."""
     if tqdm is None:
         return None
@@ -368,7 +370,7 @@ def _record_failure(
     }
 
 
-def _finalize_ready_stations(
+def _finalize_stations(
     output_dir: pathlib.Path,
     state: dict,
     station_ids: typing.List[str],
@@ -407,7 +409,7 @@ def _finalize_ready_stations(
         station['temp_bytes'] = 0
 
 
-def _configure_logger(output_dir: pathlib.Path):
+def _configure_logger(output_dir: pathlib.Path) -> logging.Handler:
     """Configure one bounded log file and return its handler."""
     logger = logging.getLogger('download_obs')
     logger.setLevel(logging.INFO)
@@ -617,7 +619,7 @@ def main(
                         refresh=False,
                     )
 
-            _finalize_ready_stations(
+            _finalize_stations(
                 output_dir, state, batch, slice_keys
             )
             _prune_failures(state)

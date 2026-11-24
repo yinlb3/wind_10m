@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Build the 10-day, 3-hourly wind product from per-station models.
+Build the deployment wind product from per-station models.
 
 Every station is handled independently. The model is trained on the full
 52-slot window (3-240 h) read straight from ``data{sta}.npy`` plus the
 hourly observations, the factors are expanded onto the uniform 80-slot
 3-hourly grid. Each station npz stores float32 directions and speeds.
 
-The main experiment trains on the 13-36 h window because that is what the
-paper evaluates; this product is a separate deliverable and must not be
-mixed with the tables of the main run.
+The main experiment trains and verifies on the dataset evaluation grid; this
+product is a separate deliverable and must not be mixed with the tables of the
+main run.
 
 Founded in 2026-11-04
-Modified in 2026-11-20
+Modified in 2026-11-24
+@author: yinlb
 @author: yinlb
 """
 
@@ -24,8 +25,8 @@ import typing
 
 import numpy as np
 
-from src import data_2411, window
-from train_2411 import fit_lgb, predict_multi, sc_to_ds, uv_to_ds
+from src import workflow, window
+from train import fit_lgb, predict_multi, sc_to_ds, uv_to_ds
 
 MODELS = ('LightGBM-A', 'LightGBM-B')
 OUTPUT_SUFFIX = {'LightGBM-A': '', 'LightGBM-B': '_b'}
@@ -111,12 +112,12 @@ def main(
     out_dir: typing.Optional[str] = None,
 ) -> None:
     """
-    Train, predict and save the 10-day product for every station.
+    Train, predict and save the deployment product for every station.
 
     Args:
         limit: Number of stations to process (0 means all).
         models: Model names to build.
-        out_dir: Output directory (default: artifacts/2411/deploy).
+        out_dir: Output directory (default: <pred_dir>/../deploy).
     """
     unknown = [name for name in models if name not in MODELS]
     if unknown or not models:
@@ -127,8 +128,8 @@ def main(
             flush=True,
         )
         return
-    cfg = data_2411.load_config()
-    station_ids = data_2411.station_ids(cfg)
+    cfg = workflow.load_config()
+    station_ids = workflow.station_ids(cfg)
     if limit:
         station_ids = station_ids[:limit]
     total = len(station_ids)
@@ -165,8 +166,8 @@ def main(
             continue
         fitted = train_station(
             x_val,
-            data_2411.encode_sc(direction, speed, cfg),
-            data_2411.encode_uv(direction, speed, cfg),
+            workflow.encode_sc(direction, speed, cfg),
+            workflow.encode_uv(direction, speed, cfg),
             cfg,
             models,
         )
@@ -198,9 +199,9 @@ def main(
 
 
 if __name__ == '__main__':
-    print('Program predict_10day.py started', flush=True)
+    print('Program predict_product.py started', flush=True)
     parser = argparse.ArgumentParser(
-        description='Build the 10-day 3-hourly wind product'
+        description='Build the deployment wind product'
     )
     parser.add_argument(
         '--limit', type=int, default=0,
@@ -212,7 +213,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--out-dir', type=str, default='',
-        help='output directory (default: artifacts/2411/deploy)',
+        help='output directory (default: <pred_dir>/../deploy)',
     )
     args = parser.parse_args()
     names = [item.strip() for item in args.models.split(',') if item.strip()]

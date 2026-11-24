@@ -1,15 +1,15 @@
-# 2411 站参考数据集与扩展说明
+# 流程说明与参考数据集
 
-> 2411 站是首个完整跑通流程的参考数据集，不是项目的固定站数或最终目的。
+> 参考数据集是首个完整跑通流程的实例，不是项目的固定站数或最终目的。
 > 通用安装、配置和缓存选择见 `README_cn.md`。
 
 ## 1. 当前状态
 
-### 主实验与扩展
+### 流程与扩展
 
-- 主实验：2019–2024 年六折预测、共同样本表 4/5、图 1–5 已完成。
 - 参考站点：2411 个候选站，2233 个有因子和观测，QC 后保留 2187 站。
-- 四方案对比和十天产品：代码与冒烟检查已完成，尚无全量正式结果。
+- 评估网格为数据集声明的 3–240 h、3 h 间隔共 80 个时次。
+- 训练、检验、四方案和十天产品尚未在该网格上全量运行；正式数值待产出后填入。
 
 ### 通用化与下载器：本机已完成
 
@@ -53,8 +53,7 @@
 | 样本数 | 4384，末期为 2024-12-31 12 UTC |
 | 原始前段 | 3、6、…、72 h，共 24 个时效 |
 | 原始后段 | 78、84、…、240 h，共 28 个时效 |
-| 主实验目标 | 13–36 h，逐小时，共 24 个时次 |
-| 扩展目标 | 3–240 h，3 h 间隔，共 80 个时次 |
+| 评估网格 | 3–240 h，3 h 间隔，共 80 个时次，由数据集配置声明 |
 
 每年起报数由时间轴推导，闰年为 732，其他年份为 730；不能按固定 730
 切分年份。
@@ -89,7 +88,7 @@
 
 ## 3. 观测清洗与站点质控
 
-清洗顺序在 `src/data_2411.py` 中实现：
+清洗顺序在 `src/workflow.py` 中实现：
 
 1. 先识别静风 `999017` 和缺测码，避免静风被普通范围检查提前清除。
 2. 风向 `360 → 0`，保留 `[0, 360)`；风速保留 `[0, 1000)`。
@@ -123,7 +122,7 @@ python -m wind10m --config config/datasets/2411.yaml qc
 `dir/spd` 无损重建，旧版完整缓存仍可读取。
 
 ```bash
-# 参考主实验
+# 参考实验
 python -m wind10m --config config/datasets/2411.yaml \
   estimate-cache --stations 2233 --hours 24
 
@@ -135,10 +134,11 @@ python -m wind10m --config config/datasets/2411.yaml cache
 使用旧格式，2233 站占 29.76 GB、建缓存耗时 5.8 min；新完整格式预计减少
 约 14.7%。
 
-## 5. 主实验复现
+## 5. 参考实验复现
 
 通用默认值在 `config/base.yaml`，参考数据集参数在
-`config/datasets/2411.yaml`。主实验使用 `lead.mode: 24`。
+`config/datasets/2411.yaml`。评估网格由数据集配置的 `lead.grid_start`、
+`lead.grid_end`、`lead.grid_step` 声明。
 
 ```bash
 python -m wind10m --config config/datasets/2411.yaml qc
@@ -164,50 +164,25 @@ python -m wind10m --config config/datasets/2411.yaml plot
 
 主要输出：
 
-- `artifacts/2411/pred/{model}_{year}.npy`
+- `<pred_dir>/{model}_{year}.npy`
 - `docs/results/qc/`：站点质量表及保留/剔除清单
 - `docs/results/tables/table4_ab.csv`
 - `docs/results/tables/table5_overall.csv`
 - `docs/results/tables/table5_by_year.csv`
 - `docs/results/tables/*_own_samples.csv`
-- `docs/results/tables/mi_2411.npy`
+- `docs/results/tables/mi.npy`
 - `docs/results/figures/`：图 1–5
 
 正式主表使用五个模型共同有效的风速/风向样本。各自样本结果只放在
 `*_own_samples.csv` 附表，两种口径不能混用。主口径风向 OA/kappa 排除
 静风；`--calm-mode include` 仅用于旧口径对照。
 
-## 7. 已核验全量结果
-
-### 7.1 五模型共同样本
-
-| 模型 | 风速 CC | MAE | RMSE | 偏差 | 风速 OA | kappa | 风向 MAE | RMSE | 风向 OA | kappa |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| ECMWF-IFS | 0.599 | 1.065 | 1.425 | +0.315 | 0.468 | 0.209 | 47.78 | 65.69 | 0.361 | 0.267 |
-| PDFM | 0.697 | 0.856 | 1.177 | +0.046 | 0.546 | 0.303 | 46.34 | 64.64 | 0.378 | 0.288 |
-| MLR | 0.612 | 0.886 | 1.204 | +0.046 | 0.528 | 0.250 | 42.19 | 60.14 | 0.409 | 0.323 |
-| LightGBM-A | **0.774** | **0.701** | **0.963** | +0.039 | **0.611** | **0.387** | **41.04** | **59.37** | 0.426 | 0.343 |
-| LightGBM-B | 0.731 | 0.854 | 1.178 | −0.534 | 0.526 | 0.267 | 41.11 | 59.78 | **0.430** | **0.347** |
-
-共同风速样本 166,154,781 个，共同非静风方向样本 143,893,705 个。
-方向评价基准样本 181,404,258 个，共同方向覆盖率 79.32%。A/B 在各自
-样本口径下的方向有效覆盖率分别为 88.33% 和 81.59%。
-
-### 7.2 A/B 编码对比与数值核验
-
-- 相对 B，A 的风速 MAE、RMSE 分别降低 17.92%、18.21%。
-- 风向 MAE/RMSE 差异仅 0.18%/0.68%，分类 OA/kappa 则 B 略高。
-- B 风速偏差为 −0.534 m/s，A 为 +0.039 m/s。
-- 风速六项及风向 MAE/RMSE 与独立指标实现交叉核验，相对差为 0.0000%。
-- 正式表与独立逐站六年复核的风向 MAE/RMSE 最大差为 2.49×10⁻¹³。
-- 互信息矩阵为 26×26、严格对称；静风、全 NaN、分级边界等断言已通过。
-
-## 8. 十天逐 3 h 产品
+## 7. 部署产品（逐 3 h）
 
 ```bash
-python -m wind10m --config config/datasets/2411.yaml predict-10day
+python -m wind10m --config config/datasets/2411.yaml product
 # 小样本检查
-python -m wind10m --config config/datasets/2411.yaml predict-10day --limit 3
+python -m wind10m --config config/datasets/2411.yaml product --limit 3
 ```
 
 | 项 | 参考实现 |
@@ -215,8 +190,8 @@ python -m wind10m --config config/datasets/2411.yaml predict-10day --limit 3
 | 训练窗口 | 原始 52 个时效（3–240 h）全部参与 |
 | 推理窗口 | 80 个 3 h 时效 |
 | 时效扩展 | 72 h 后线性内插中间点，不是新增预报信息 |
-| 特征 | 26 个，与主实验同源，降水换算为 mm/h |
-| 输出 | `artifacts/2411/deploy/{station_id}.npz` |
+| 特征 | 26 个，与参考实验同源，降水换算为 mm/h |
+| 输出 | `<pred_dir>/../deploy/{station_id}.npz` |
 | 数组 | `dir/dir_b/spd/spd_b` 全部 float32 |
 | 参考形状 | `(4384, 80)` |
 | 参考空间 | A+B 双模型约 18 GB/2187 站 |
@@ -226,10 +201,10 @@ LightGBM-A 固定写 `dir/spd`，B 固定写 `dir_b/spd_b`。断点续跑检查�
 缺测只丢对应训练行，但推理要求 80 个时次特征齐全，否则输出 NaN，不做
 前向填充。
 
-主实验只验证 13–36 h，更晚时效需要独立观测检验。任何 `--limit` 运行都是
-冒烟检查，结果不得作为正式产品。
+80 时次网格的正式检验尚未完成；任何 `--limit` 运行都是冒烟检查，结果
+不得作为正式产品。
 
-## 9. 四方案对比
+## 8. 四方案对比
 
 ```bash
 python -m wind10m --config config/datasets/2411.yaml benchmark
@@ -239,7 +214,7 @@ python -m wind10m --config config/datasets/2411.yaml benchmark
 |---|---|
 | 统一 | 所有站、所有时效合并训练 |
 | 分时效 | 每个时效一个模型，跨站合并训练 |
-| 分站 | 每站一个模型，主实验采用 |
+| 分站 | 每站一个模型，参考实验采用 |
 | 分站分时效 | 每站、每时效一个模型 |
 
 四方案使用相同训练年份、检验年份、完整特征掩膜和完整目标掩膜。六折
@@ -258,10 +233,13 @@ python -m wind10m --config config/datasets/2411.yaml benchmark
 - `table7_by_lead.csv|txt`：逐折、逐时效指标；
 - `table7_overall.csv|txt`：六折合并逐时效指标。
 
-全量表 6/7 尚未生成，不能使用估算值作为实验结论。`--limit`、`--subset`
-或不完整 `--years` 均为冒烟检查，其结果应丢弃。
+表 6/7 写入 `result_dir/tables`。
 
-## 10. 观测下载与断点
+全量表 6/7 尚未生成，不能使用估算值作为实验结论。`--limit`、`--subset`
+为随机抽样（种子 42，可用 `--seed` 指定），结果可复现；配合不完整
+`--years` 的运行为冒烟检查，结果应丢弃。
+
+## 9. 观测下载与断点
 
 下载器保持单请求串行，半年切片和站点批次仍由使用者控制：
 

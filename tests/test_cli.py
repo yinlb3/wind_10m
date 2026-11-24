@@ -1,4 +1,12 @@
-"""End-to-end checks for the unified command dispatcher."""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+End-to-end checks for the unified command dispatcher.
+
+Founded in 2026-11-23
+Modified in 2026-11-24
+@author: yinlb
+"""
 
 import pathlib
 import subprocess
@@ -32,10 +40,10 @@ class CliTest(unittest.TestCase):
         result = self.run_cli('--help')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('estimate-cache', result.stdout)
-        self.assertIn('predict-10day', result.stdout)
+        self.assertIn('product', result.stdout)
 
     def test_custom_config_and_local_override(self) -> None:
-        """Verify global options reach compatibility scripts via environment."""
+        """Verify that global options reach compatibility scripts."""
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             cfg = load_config()

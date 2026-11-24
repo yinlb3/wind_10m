@@ -47,7 +47,7 @@ Station_Id_C, Datetime, PRE_1h, WIN_D_Avg_10mi, WIN_S_Avg_10mi
 
 Station IDs are derived from filenames, and NWP and observation files are matched
 by ID. The reference lead-time layout, 31-column factor layout, and special
-missing-value codes are documented in `docs/2411_cn.md`.
+missing-value codes are documented in `docs/guide_cn.md`.
 
 ### Local configuration
 
@@ -62,15 +62,13 @@ paths:
   result_dir: '/path/to/results'
   station_list: '/path/to/results/qc/stations_ok.txt'
 
-lead:
-  mode: 24
-
 cache:
   mode: none
 ```
 
-This file is ignored by Git. `lead.mode: 24` selects the validated 13–36 h main
-window, and `cache.mode: none` disables persistent-cache construction. Generic
+This file is ignored by Git. The evaluation grid is declared by the dataset YAML
+(`lead.grid_start`, `lead.grid_end`, `lead.grid_step`) rather than by a run-time
+switch, and `cache.mode: none` disables persistent-cache construction. Generic
 defaults are in `config/base.yaml`; reference dataset settings are in
 `config/datasets/2411.yaml`.
 
@@ -80,17 +78,17 @@ Run the following commands from the project root, in order:
 
 ```bash
 # 1. Clean observations and create the QC station list
-python qc_stations_2411.py
+python qc_stations.py
 
 # 2. Six-fold leave-one-year-out training and prediction
-python train_2411.py
+python train.py
 
 # 3. Common-sample verification and grouped statistics
-python verify_2411.py
+python verify.py
 
 # 4. Mutual-information matrix and figures
-python compute_mi_2411.py
-python plot_2411.py
+python compute_mi.py
+python plot.py
 ```
 
 Each fold includes ECMWF-IFS, PDFM, MLR, LightGBM-A (angle encoding), and
@@ -107,13 +105,16 @@ configuration uses:
 | Content | Directory |
 |---|---|
 | QC tables and station lists | `docs/results/qc/` |
-| Per-model, per-year predictions | `artifacts/2411/pred/` |
+| Per-model, per-year predictions | `<pred_dir>` |
 | Overall and grouped verification tables | `docs/results/tables/` |
 | Figures 1–5 | `docs/results/figures/` |
-| Optional per-station caches | `artifacts/2411/cache/` |
+| Optional per-station caches | `<cache_dir>` |
+
+Large outputs (predictions and optional caches) live outside the repository
+under a local data root; only the small tables and figures stay in `docs/`.
 
 Metric definitions, common-sample rules, and verified reference values are in
-`docs/2411_cn.md`.
+`docs/guide_cn.md`.
 
 ## Observation download
 
@@ -136,7 +137,7 @@ The downloader uses serial requests and half-year slices. Running the same
 command again resumes from `.download_state.json` without repeating completed
 station slices. Failures do not remove temporary files; only an explicit
 `--restart` resets an incomplete job. Stations without observations receive a
-header-only CSV. State and logging details are in `docs/2411_cn.md`.
+header-only CSV. State and logging details are in `docs/guide_cn.md`.
 
 ## Cache configuration
 
@@ -152,13 +153,14 @@ python cache_size.py --stations 2233 --hours 24
 | `obs` | `dir/spd/pre` | 2.63 GiB | Limited disk; features rebuilt on demand |
 | `full` | `x/dir/spd/pre` | 25.38 GiB | Repeated experiments and unified/per-lead schemes |
 
-Reference sizes use 2233 stations, 4384 samples, 24 hours, and 26 features.
-Use `--stations`, `--samples`, `--hours`, and `--features` for other datasets.
+Reference sizes use the configured station count, samples, evaluation hours,
+and features. Use `--stations`, `--samples`, `--hours`, and `--features` for
+other datasets.
 
 After selecting `obs` or `full` in the local YAML, run:
 
 ```bash
-python build_cache_2411.py
+python build_cache.py
 ```
 
 ## Using another dataset
@@ -180,12 +182,12 @@ column layout or file format requires a `DatasetAdapter` change.
 python benchmark_schemes.py
 
 # 3–240 h wind forecasts at 3-hour intervals
-python predict_10day.py
+python predict_product.py
 ```
 
 The extensions have passed small-sample checks but have no final full-run
-results. The 10-day product interpolates after 72 h. Only 13–36 h has been
-validated; later lead times require independent observation-based verification.
+results. The deployment product interpolates after 72 h; both the extension schemes
+and the product still need a full run on the 80-slot grid.
 
 ## Tests
 
@@ -198,15 +200,34 @@ points, data adaptation, caches, and download failure recovery.
 
 ## Documentation
 
-- `docs/2411_cn.md`: reference data, reproduction results, caches, downloads,
+- `docs/guide_cn.md`: reference data, reproduction results, caches, downloads,
   and extension parameters.
 - `AGENTS.md`: development rules, verification requirements, and safety boundaries.
 
-## License and contact
+## Reproducing end to end
 
-This is internal research code; no public license is provided.
+Pinned versions are in `requirements.txt`; `environment.yml` builds a matching
+conda environment.
+
+```bash
+bash reproduce.sh                    # Linux and macOS
+```
+
+On Windows, run the same `python -m wind10m ...` commands with the same
+interpreter.
+
+## Citation and license
+
+This code is released under the MIT License (see `LICENSE`).
+
+Accompanying manuscript:
+
+> 基于LightGBM和角度编码策略的风速风向短期预报方法
+
+Figures 1–5 are produced by `plot.py` from the verification tables written by
+`verify.py`. Citation metadata is in `CITATION.cff`.
 
 - Author: yinlb
 - Email: yinlb3@foxmail.com
 
-Last updated: 2026-11-23
+Last updated: 2026-11-24
