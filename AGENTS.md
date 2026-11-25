@@ -48,7 +48,7 @@ benchmark_schemes.py        Four-scheme comparison, tables 6/7
 predict_product.py            deployment wind product
 download_obs.py             Optional standalone observation downloader
 tests/                      Synthetic configuration/CLI/adapter/cache tests
-docs/guide_cn.md             Reference data, results, extensions, refactor status
+docs/guide_cn.md             Reference data, results, extensions, status
 LICENSE                     MIT license
 CITATION.cff                Citation metadata for the accompanying paper
 environment.yml             Conda environment; pins live in requirements.txt
@@ -75,7 +75,8 @@ sta_dir/2024/{station_id}.csv   Optional reference-data split
 
 For a replacement dataset:
 
-1. Copy and adjust a dataset YAML, including time, lead, feature, obs, and paths.
+1. Copy and adjust a dataset YAML, including time, lead, feature, obs, and
+   paths.
 2. Confirm raw factor indices match the adapter or implement a new adapter.
 3. Pass `--config` and optionally `--local` before the workflow command.
 4. Estimate cache storage, then run QC to create a new station list.
@@ -120,20 +121,21 @@ Both persistent formats reconstruct `y/uv` and accept legacy full caches.
 
 ### Extensions
 
-The four-scheme comparison and the deployment product use the same dataset grid and
-write into the configured prediction and result directories.
+The four-scheme comparison and the deployment product use the same dataset
+grid and write into the configured prediction and result directories.
 
 ```bash
 python -m wind10m --config config/datasets/2411.yaml benchmark
 python -m wind10m --config config/datasets/2411.yaml product
 ```
 
-No limiting arguments means all configured stations and folds. `--limit` and
-`--subset` sample stations at random with a fixed seed (42; override with
+No limiting arguments means all configured stations and folds. `build-cache`
+and `benchmark` sample stations at random with a fixed seed (42; override with
 `--seed`), so a small run reproduces exactly and avoids the spatial bias of a
-head slice. Any `--limit`, `--subset`, or incomplete `--years` run is still a
-smoke check. The deployment product uses interpolation after 72 h and lacks
-independent later-lead verification.
+head slice. `train` and `verify` still take the first stations of the list,
+and their `--limit` values must match. Any limited or incomplete-`--years` run
+is still a smoke check. The deployment product uses interpolation after 72 h
+and lacks independent later-lead verification.
 
 ## 5. Verification
 
@@ -178,8 +180,12 @@ confirmation.
 ### Always
 
 - Run syntax and focused functional checks before reporting completion.
-- Keep generated data, caches, predictions, results, and local config out of Git.
-- Review `git status` and remove only temporary files created by the current task.
+- Push to `origin`, which is GitHub. `gitee` is a read-only mirror and
+  never receives direct pushes.
+- Keep generated data, caches, predictions, results and local config out
+  of Git.
+- Review `git status` and remove only temporary files created by the
+  current task.
 
 ### Ask first
 
@@ -194,45 +200,14 @@ confirmation.
 - Treat smoke outputs or estimated metrics as final results.
 - Reintroduce retired legacy workflows into user-facing documentation.
 
-## 8. Completed and pending work
-
-Completed on this computer on 2026-11-24:
-
-- Declared the evaluation grid in the dataset YAML instead of a run-time mode
-  switch; predictions and results no longer fork into per-mode directories.
-- Reworked verification to memory-map predictions and score adaptive station
-  blocks; the whole-fold arrays needed roughly 46 GB at 80 hours.
-- Stored a cache descriptor in every NPZ and refused incompatible caches with a
-  single rebuild notice.
-- Added `--years` to verification and fixed `--limit`, which previously could
-  not slice full-station prediction files.
-- Every output now targets the grid declared by the dataset; no per-mode
-  output directories remain.
-- Added the MIT license, citation metadata, pinned requirements, a conda
-  environment and an end-to-end `reproduce.sh`.
-
-Completed on this computer on 2026-11-23:
-
-- Added optional `none/obs/full` caches and lossless target reconstruction.
-- Added raw-observation QC and dataset-specific cache size estimation.
-- Added layered generic/dataset/local configuration and the unified CLI.
-- Added the adapter interface and NPY/CSV implementation without changing
-  numerical algorithms.
-- Added resumable serial downloads with per-station completion, failure
-  preservation, exact retry context, bounded logs, and empty-station CSVs.
-- Removed the retired station-specific entry points, evaluation helpers and
-  legacy configuration files from the supported codebase.
-- Added nine synthetic regression tests and retained current entry-point
-  compatibility.
-- Merged reference and extension documentation into `docs/guide_cn.md`.
-
-Pending:
+## 8. Pending work
 
 - `download_obs.py` imports `nmc_met_io` at module level, so importing it (or
   the download tests) fails when `~/.nmcdev/config.ini` is missing; move the
   import into the request path and document the credentials file.
 - Small real CMADaaS requests and targeted replay of the previous empty slice.
-- Before public release: complete old-result and one-fold validation, then audit Git history for private content.
+- Before public release: complete old-result and one-fold validation, then
+  audit Git history for private content.
 - Migration of training, schemes, and evaluation internals after equivalence.
 - Additional adapters for other raw layouts, including yearly arrays.
 - Full four-scheme and deployment runs with independent later-lead verification.
